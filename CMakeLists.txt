@@ -1,12 +1,16 @@
 cmake_minimum_required(VERSION 3.19)
 project(ProteusLite LANGUAGES CXX)
 
+set(CMAKE_AUTOUIC ON)
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
 
 qt_standard_project_setup()
 
 qt_add_executable(ProteusLite
     WIN32 MACOSX_BUNDLE
+    circuitcanvas.cpp
+    circuitcanvas.h
     main.cpp
     mainwindow.cpp
     mainwindow.h
