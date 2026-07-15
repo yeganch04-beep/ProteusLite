@@ -11,14 +11,22 @@ qt_add_executable(ProteusLite
     WIN32 MACOSX_BUNDLE
     circuitcanvas.cpp
     circuitcanvas.h
+    component.cpp
+    component.h
     main.cpp
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
     newprojectdialog.cpp
     newprojectdialog.h
+    node.cpp
+    node.h
+    pin.cpp
+    pin.h
     startpage.cpp
     startpage.h
+    wire.cpp
+    wire.h
 )
 
 target_link_libraries(ProteusLite
