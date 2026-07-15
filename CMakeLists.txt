@@ -15,6 +15,10 @@ qt_add_executable(ProteusLite
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
+    newprojectdialog.cpp
+    newprojectdialog.h
+    startpage.cpp
+    startpage.h
 )
 
 target_link_libraries(ProteusLite
