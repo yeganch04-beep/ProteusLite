@@ -84,6 +84,16 @@ MainWindow::MainWindow(QWidget *parent)
                 zoomLabel->setText(QString("Zoom: %1%").arg(percentage));
             });
 
+    connect(componentList, &ComponentListWidget::componentTypeSelected,
+            canvas, &CircuitCanvas::setActiveComponentType);
+
+    connect(canvas, &CircuitCanvas::actionOccurred, this,
+            [this](const QString &message) {
+                if (projectLogLabel != nullptr) {
+                    projectLogLabel->setText(message);
+                }
+            });
+
     createMenuActions();
     showStartPage();
 }

@@ -19,6 +19,14 @@ ComponentListWidget::ComponentListWidget(QWidget *parent)
     addComponentItem("AND Gate", "AndGate");
     addComponentItem("OR Gate", "OrGate");
     addComponentItem("NOT Gate", "NotGate");
+
+    connect(this, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem *item) {
+                const QString typeName = item->data(Qt::UserRole).toString();
+                if (!typeName.isEmpty()) {
+                    emit componentTypeSelected(typeName);
+                }
+            });
 }
 
 void ComponentListWidget::addComponentItem(const QString &label, const QString &typeName)

@@ -11,6 +11,9 @@ class ComponentListWidget : public QListWidget
 public:
     explicit ComponentListWidget(QWidget *parent = nullptr);
 
+signals:
+    void componentTypeSelected(const QString &typeName);
+
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
