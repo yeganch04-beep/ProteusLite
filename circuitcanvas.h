@@ -46,9 +46,18 @@ private:
         int rotationDegrees = 0;
     };
 
+    struct PlacedWire
+    {
+        QPoint startPoint;
+        QPoint endPoint;
+    };
+
     QPointF screenToWorld(const QPoint &screenPoint) const;
     void emitMousePosition(const QPoint &screenPoint);
     int componentAt(const QPoint &worldPoint) const;
+    int wireAt(const QPoint &worldPoint) const;
+    QVector<QPoint> orthogonalWirePath(const QPoint &startPoint, const QPoint &endPoint) const;
+    double distanceToSegment(const QPoint &point, const QPoint &startPoint, const QPoint &endPoint) const;
     QRectF componentBounds(const QPoint &position) const;
     QString componentDisplayName(const QString &typeName) const;
     QString createComponentLabel(const QString &typeName);
@@ -56,6 +65,8 @@ private:
     void drawComponent(QPainter &painter, const QString &typeName) const;
     void drawComponentLabel(QPainter &painter, const PlacedComponent &component) const;
     void drawSelectedComponentBounds(QPainter &painter, const QRectF &bounds) const;
+    void drawWire(QPainter &painter, const PlacedWire &wire, bool selected) const;
+    void drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const;
     void drawResistor(QPainter &painter) const;
     void drawCapacitor(QPainter &painter) const;
     void drawInductor(QPainter &painter) const;
@@ -73,11 +84,17 @@ private:
     QPointF panOffset;
     bool isPanning;
     bool isDraggingComponent;
+    bool isWiringMode;
+    bool hasWireStartPoint;
     QPoint lastPanPoint;
+    QPoint wireStartPoint;
+    QPoint previewWireEndPoint;
     QString activeComponentType;
     QVector<PlacedComponent> placedComponents;
+    QVector<PlacedWire> placedWires;
     QHash<QString, int> labelCounters;
     int selectedComponentIndex;
+    int selectedWireIndex;
 };
 
 #endif // CIRCUITCANVAS_H

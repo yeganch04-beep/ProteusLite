@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 CircuitCanvas::CircuitCanvas(QWidget *parent)
     : QWidget(parent)
@@ -15,7 +16,10 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , panOffset(0.0, 0.0)
     , isPanning(false)
     , isDraggingComponent(false)
+    , isWiringMode(false)
+    , hasWireStartPoint(false)
     , selectedComponentIndex(-1)
+    , selectedWireIndex(-1)
 {
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
@@ -54,6 +58,27 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    if (event->key() == Qt::Key_Delete && selectedWireIndex >= 0) {
+        placedWires.removeAt(selectedWireIndex);
+        selectedWireIndex = -1;
+        emit actionOccurred("Wire deleted");
+        update();
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_W) {
+        isWiringMode = !isWiringMode;
+        hasWireStartPoint = false;
+        isDraggingComponent = false;
+        selectedComponentIndex = -1;
+        selectedWireIndex = -1;
+        emit actionOccurred(isWiringMode ? "Wire mode enabled" : "Wire mode disabled");
+        update();
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_R && selectedComponentIndex >= 0) {
         PlacedComponent &component = placedComponents[selectedComponentIndex];
         component.rotationDegrees = (component.rotationDegrees + 90) % 360;
@@ -80,10 +105,53 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
 
     if (event->button() == Qt::LeftButton) {
         const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
+        const QPoint snappedPoint = snapToGrid(worldPoint);
+
+        if (isWiringMode) {
+            selectedComponentIndex = -1;
+            selectedWireIndex = -1;
+
+            if (!hasWireStartPoint) {
+                wireStartPoint = snappedPoint;
+                previewWireEndPoint = snappedPoint;
+                hasWireStartPoint = true;
+                emit actionOccurred(QString("Wire started at X: %1, Y: %2")
+                                        .arg(wireStartPoint.x())
+                                        .arg(wireStartPoint.y()));
+            } else {
+                PlacedWire wire;
+                wire.startPoint = wireStartPoint;
+                wire.endPoint = snappedPoint;
+                placedWires.append(wire);
+                selectedWireIndex = placedWires.size() - 1;
+                hasWireStartPoint = false;
+                emit actionOccurred(QString("Wire placed from X: %1, Y: %2 to X: %3, Y: %4")
+                                        .arg(wire.startPoint.x())
+                                        .arg(wire.startPoint.y())
+                                        .arg(wire.endPoint.x())
+                                        .arg(wire.endPoint.y()));
+            }
+
+            update();
+            event->accept();
+            return;
+        }
+
+        const int clickedWireIndex = wireAt(worldPoint);
+        if (clickedWireIndex >= 0) {
+            selectedComponentIndex = -1;
+            selectedWireIndex = clickedWireIndex;
+            emit actionOccurred("Wire selected");
+            update();
+            event->accept();
+            return;
+        }
+
         const int clickedIndex = componentAt(worldPoint);
 
         if (clickedIndex >= 0) {
             selectedComponentIndex = clickedIndex;
+            selectedWireIndex = -1;
             isDraggingComponent = true;
             emit actionOccurred(QString("Selected component: %1")
                                     .arg(componentDisplayName(placedComponents[clickedIndex].typeName)));
@@ -99,6 +167,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
             component.position = snapToGrid(worldPoint);
             placedComponents.append(component);
             selectedComponentIndex = placedComponents.size() - 1;
+            selectedWireIndex = -1;
             emit actionOccurred(QString("Placed %1 at X: %2, Y: %3")
                                     .arg(componentDisplayName(component.typeName))
                                     .arg(component.position.x())
@@ -109,6 +178,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
         }
 
         selectedComponentIndex = -1;
+        selectedWireIndex = -1;
         update();
     }
 
@@ -170,6 +240,14 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
         painter.drawLine(QPointF(firstX, y), QPointF(lastX, y));
     }
 
+    for (int i = 0; i < placedWires.size(); ++i) {
+        drawWire(painter, placedWires[i], i == selectedWireIndex);
+    }
+
+    if (isWiringMode && hasWireStartPoint) {
+        drawWirePath(painter, orthogonalWirePath(wireStartPoint, previewWireEndPoint), true);
+    }
+
     for (int i = 0; i < placedComponents.size(); ++i) {
         const PlacedComponent &component = placedComponents[i];
 
@@ -199,6 +277,12 @@ void CircuitCanvas::mouseMoveEvent(QMouseEvent *event)
     if (isDraggingComponent && selectedComponentIndex >= 0) {
         const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
         placedComponents[selectedComponentIndex].position = snapToGrid(worldPoint);
+        update();
+    }
+
+    if (isWiringMode && hasWireStartPoint) {
+        const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
+        previewWireEndPoint = snapToGrid(worldPoint);
         update();
     }
 
@@ -237,6 +321,54 @@ int CircuitCanvas::componentAt(const QPoint &worldPoint) const
     }
 
     return -1;
+}
+
+int CircuitCanvas::wireAt(const QPoint &worldPoint) const
+{
+    constexpr double HitTolerance = 8.0;
+
+    for (int i = placedWires.size() - 1; i >= 0; --i) {
+        const QVector<QPoint> path = orthogonalWirePath(placedWires[i].startPoint, placedWires[i].endPoint);
+
+        for (int pointIndex = 0; pointIndex + 1 < path.size(); ++pointIndex) {
+            if (distanceToSegment(worldPoint, path[pointIndex], path[pointIndex + 1]) <= HitTolerance) {
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+QVector<QPoint> CircuitCanvas::orthogonalWirePath(const QPoint &startPoint, const QPoint &endPoint) const
+{
+    const int middleX = (startPoint.x() + endPoint.x()) / 2;
+
+    return {
+        startPoint,
+        QPoint(middleX, startPoint.y()),
+        QPoint(middleX, endPoint.y()),
+        endPoint
+    };
+}
+
+double CircuitCanvas::distanceToSegment(const QPoint &point, const QPoint &startPoint, const QPoint &endPoint) const
+{
+    const double dx = endPoint.x() - startPoint.x();
+    const double dy = endPoint.y() - startPoint.y();
+
+    if (dx == 0.0 && dy == 0.0) {
+        return std::hypot(point.x() - startPoint.x(), point.y() - startPoint.y());
+    }
+
+    const double t = std::clamp(((point.x() - startPoint.x()) * dx + (point.y() - startPoint.y()) * dy)
+                                    / (dx * dx + dy * dy),
+                                0.0,
+                                1.0);
+    const double closestX = startPoint.x() + t * dx;
+    const double closestY = startPoint.y() + t * dy;
+
+    return std::hypot(point.x() - closestX, point.y() - closestY);
 }
 
 QRectF CircuitCanvas::componentBounds(const QPoint &position) const
@@ -372,6 +504,31 @@ void CircuitCanvas::drawSelectedComponentBounds(QPainter &painter, const QRectF 
     painter.setPen(selectedPen);
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(bounds.adjusted(2, 2, -2, -2));
+}
+
+void CircuitCanvas::drawWire(QPainter &painter, const PlacedWire &wire, bool selected) const
+{
+    drawWirePath(painter, orthogonalWirePath(wire.startPoint, wire.endPoint), selected);
+}
+
+void CircuitCanvas::drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const
+{
+    if (path.size() < 2) {
+        return;
+    }
+
+    QPen wirePen(QColor(45, 95, 190), selected ? 4 : 2);
+    wirePen.setCosmetic(true);
+    if (selected) {
+        wirePen.setStyle(Qt::DashLine);
+    }
+
+    painter.setPen(wirePen);
+    painter.setBrush(Qt::NoBrush);
+
+    for (int i = 0; i + 1 < path.size(); ++i) {
+        painter.drawLine(path[i], path[i + 1]);
+    }
 }
 
 void CircuitCanvas::drawResistor(QPainter &painter) const
