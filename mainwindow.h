@@ -37,4 +37,5 @@ private:
     int currentCanvasWidth;
     int currentCanvasHeight;
 };
+
 #endif // MAINWINDOW_H

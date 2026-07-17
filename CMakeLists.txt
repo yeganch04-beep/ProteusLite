@@ -13,6 +13,8 @@ qt_add_executable(ProteusLite
     circuitcanvas.h
     component.cpp
     component.h
+    componentlistwidget.cpp
+    componentlistwidget.h
     main.cpp
     mainwindow.cpp
     mainwindow.h

@@ -1,4 +1,5 @@
 #include "circuitcanvas.h"
+#include "componentlistwidget.h"
 #include "mainwindow.h"
 #include "newprojectdialog.h"
 #include "startpage.h"
@@ -38,7 +39,9 @@ MainWindow::MainWindow(QWidget *parent)
     auto *componentsGroupBox = new QGroupBox("Components", editorPage);
     componentsGroupBox->setMinimumWidth(180);
     componentsGroupBox->setMaximumWidth(240);
-    componentsGroupBox->setLayout(new QVBoxLayout());
+    auto *componentsLayout = new QVBoxLayout(componentsGroupBox);
+    auto *componentList = new ComponentListWidget(componentsGroupBox);
+    componentsLayout->addWidget(componentList);
 
     auto *canvasGroupBox = new QGroupBox("Circuit Canvas", editorPage);
     auto *canvasLayout = new QVBoxLayout(canvasGroupBox);

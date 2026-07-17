@@ -11,64 +11,9 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>ProteusLite</string>
+   <string>MainWindow</string>
   </property>
-  <widget class="QWidget" name="centralwidget">
-   <layout class="QVBoxLayout" name="mainLayout">
-    <item>
-     <layout class="QHBoxLayout" name="workspaceLayout">
-      <item>
-       <widget class="QGroupBox" name="componentsGroupBox">
-        <property name="minimumSize">
-         <size>
-          <width>180</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>240</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="title">
-         <string>Components</string>
-        </property>
-        <layout class="QVBoxLayout" name="componentsLayout"/>
-       </widget>
-      </item>
-      <item>
-       <widget class="QGroupBox" name="canvasGroupBox">
-        <property name="title">
-         <string>Circuit Canvas</string>
-        </property>
-        <layout class="QVBoxLayout" name="canvasLayout"/>
-       </widget>
-      </item>
-     </layout>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="logGroupBox">
-      <property name="minimumSize">
-       <size>
-        <width>0</width>
-        <height>120</height>
-       </size>
-      </property>
-      <property name="maximumSize">
-       <size>
-        <width>16777215</width>
-        <height>160</height>
-       </size>
-      </property>
-      <property name="title">
-       <string>Log</string>
-      </property>
-      <layout class="QVBoxLayout" name="logLayout"/>
-     </widget>
-    </item>
-   </layout>
-  </widget>
+  <widget class="QWidget" name="centralwidget"/>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
