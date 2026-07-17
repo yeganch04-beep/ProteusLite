@@ -3,21 +3,19 @@
 
 #include <QMainWindow>
 
-QT_BEGIN_NAMESPACE
-namespace Ui {
-class MainWindow;
-}
-QT_END_NAMESPACE
+class CanvasView;
+class ComponentListWidget;
+class QDockWidget;
 
-class MainWindow : public QMainWindow
-{
+class MainWindow : public QMainWindow {
     Q_OBJECT
-
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override;
+    ~MainWindow() override = default;
 
 private:
-    Ui::MainWindow *ui;
+    CanvasView *m_canvasView;
+    ComponentListWidget *m_compSidebar;
+    QDockWidget *m_dock;
 };
-#endif // MAINWINDOW_H
+#endif
