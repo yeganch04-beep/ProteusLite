@@ -27,6 +27,7 @@ signals:
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
@@ -44,6 +45,10 @@ private:
         QString label;
         QPoint position;
         int rotationDegrees = 0;
+        bool stateOn = false;
+        bool inputA = false;
+        bool inputB = false;
+        int outputValue = 0;
     };
 
     struct PlacedWire
@@ -62,18 +67,21 @@ private:
     QString componentDisplayName(const QString &typeName) const;
     QString createComponentLabel(const QString &typeName);
     QString labelPrefix(const QString &typeName) const;
-    void drawComponent(QPainter &painter, const QString &typeName) const;
+    bool isLogicGate(const QString &typeName) const;
+    void evaluateLogicGates();
+    void drawComponent(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentLabel(QPainter &painter, const PlacedComponent &component) const;
+    void drawComponentStateText(QPainter &painter, const PlacedComponent &component) const;
     void drawSelectedComponentBounds(QPainter &painter, const QRectF &bounds) const;
     void drawWire(QPainter &painter, const PlacedWire &wire, bool selected) const;
     void drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const;
     void drawResistor(QPainter &painter) const;
     void drawCapacitor(QPainter &painter) const;
     void drawInductor(QPainter &painter) const;
-    void drawDiode(QPainter &painter, bool led) const;
-    void drawSwitch(QPainter &painter) const;
+    void drawDiode(QPainter &painter, bool led, bool ledOn) const;
+    void drawSwitch(QPainter &painter, bool closed) const;
     void drawGround(QPainter &painter) const;
-    void drawVoltageSource(QPainter &painter) const;
+    void drawVoltageSource(QPainter &painter, int value) const;
     void drawAndGate(QPainter &painter) const;
     void drawOrGate(QPainter &painter) const;
     void drawNotGate(QPainter &painter) const;
