@@ -79,6 +79,14 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    if (event->key() == Qt::Key_E) {
+        evaluateLogicGates();
+        emit actionOccurred("Logic gates evaluated");
+        update();
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_R && selectedComponentIndex >= 0) {
         PlacedComponent &component = placedComponents[selectedComponentIndex];
         component.rotationDegrees = (component.rotationDegrees + 90) % 360;
@@ -89,6 +97,59 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
     }
 
     QWidget::keyPressEvent(event);
+}
+
+void CircuitCanvas::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton || isWiringMode) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
+    const int clickedIndex = componentAt(worldPoint);
+
+    if (clickedIndex < 0) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    PlacedComponent &component = placedComponents[clickedIndex];
+    selectedComponentIndex = clickedIndex;
+    selectedWireIndex = -1;
+    isDraggingComponent = false;
+
+    QString actionMessage;
+
+    if (component.typeName == "Switch") {
+        component.stateOn = !component.stateOn;
+        actionMessage = QString("Switch toggled %1").arg(component.stateOn ? "ON" : "OFF");
+    } else if (component.typeName == "VoltageSource") {
+        component.stateOn = !component.stateOn;
+        actionMessage = QString("Digital Voltage Source set to %1").arg(component.stateOn ? 1 : 0);
+    } else if (component.typeName == "Led") {
+        component.stateOn = !component.stateOn;
+        actionMessage = QString("LED toggled %1").arg(component.stateOn ? "ON" : "OFF");
+    } else if (component.typeName == "AndGate" || component.typeName == "OrGate") {
+        const int currentInputs = (component.inputA ? 2 : 0) + (component.inputB ? 1 : 0);
+        const int nextInputs = (currentInputs + 1) % 4;
+        component.inputA = (nextInputs & 2) != 0;
+        component.inputB = (nextInputs & 1) != 0;
+        actionMessage = QString("%1 inputs set to A=%2 B=%3")
+                            .arg(componentDisplayName(component.typeName))
+                            .arg(component.inputA ? 1 : 0)
+                            .arg(component.inputB ? 1 : 0);
+    } else if (component.typeName == "NotGate") {
+        component.inputA = !component.inputA;
+        actionMessage = QString("NOT Gate input set to IN=%1").arg(component.inputA ? 1 : 0);
+    } else {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    emit actionOccurred(QString("%1 - Component state changed: %2").arg(actionMessage, component.label));
+    update();
+    event->accept();
 }
 
 void CircuitCanvas::mousePressEvent(QMouseEvent *event)
@@ -254,10 +315,11 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
         painter.save();
         painter.translate(component.position);
         painter.rotate(component.rotationDegrees);
-        drawComponent(painter, component.typeName);
+        drawComponent(painter, component);
         painter.restore();
 
         drawComponentLabel(painter, component);
+        drawComponentStateText(painter, component);
 
         if (i == selectedComponentIndex) {
             drawSelectedComponentBounds(painter, componentBounds(component.position));
@@ -445,7 +507,25 @@ QString CircuitCanvas::labelPrefix(const QString &typeName) const
     return "U";
 }
 
-void CircuitCanvas::drawComponent(QPainter &painter, const QString &typeName) const
+bool CircuitCanvas::isLogicGate(const QString &typeName) const
+{
+    return typeName == "AndGate" || typeName == "OrGate" || typeName == "NotGate";
+}
+
+void CircuitCanvas::evaluateLogicGates()
+{
+    for (PlacedComponent &component : placedComponents) {
+        if (component.typeName == "AndGate") {
+            component.outputValue = (component.inputA && component.inputB) ? 1 : 0;
+        } else if (component.typeName == "OrGate") {
+            component.outputValue = (component.inputA || component.inputB) ? 1 : 0;
+        } else if (component.typeName == "NotGate") {
+            component.outputValue = component.inputA ? 0 : 1;
+        }
+    }
+}
+
+void CircuitCanvas::drawComponent(QPainter &painter, const PlacedComponent &component) const
 {
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setBrush(Qt::NoBrush);
@@ -453,27 +533,27 @@ void CircuitCanvas::drawComponent(QPainter &painter, const QString &typeName) co
     symbolPen.setCosmetic(true);
     painter.setPen(symbolPen);
 
-    if (typeName == "Resistor") {
+    if (component.typeName == "Resistor") {
         drawResistor(painter);
-    } else if (typeName == "Capacitor") {
+    } else if (component.typeName == "Capacitor") {
         drawCapacitor(painter);
-    } else if (typeName == "Inductor") {
+    } else if (component.typeName == "Inductor") {
         drawInductor(painter);
-    } else if (typeName == "Diode") {
-        drawDiode(painter, false);
-    } else if (typeName == "Led") {
-        drawDiode(painter, true);
-    } else if (typeName == "Switch") {
-        drawSwitch(painter);
-    } else if (typeName == "Ground") {
+    } else if (component.typeName == "Diode") {
+        drawDiode(painter, false, false);
+    } else if (component.typeName == "Led") {
+        drawDiode(painter, true, component.stateOn);
+    } else if (component.typeName == "Switch") {
+        drawSwitch(painter, component.stateOn);
+    } else if (component.typeName == "Ground") {
         drawGround(painter);
-    } else if (typeName == "VoltageSource") {
-        drawVoltageSource(painter);
-    } else if (typeName == "AndGate") {
+    } else if (component.typeName == "VoltageSource") {
+        drawVoltageSource(painter, component.stateOn ? 1 : 0);
+    } else if (component.typeName == "AndGate") {
         drawAndGate(painter);
-    } else if (typeName == "OrGate") {
+    } else if (component.typeName == "OrGate") {
         drawOrGate(painter);
-    } else if (typeName == "NotGate") {
+    } else if (component.typeName == "NotGate") {
         drawNotGate(painter);
     }
 }
@@ -493,6 +573,52 @@ void CircuitCanvas::drawComponentLabel(QPainter &painter, const PlacedComponent 
 
     const QRectF labelRect(component.position.x() - 45, component.position.y() - 70, 90, 18);
     painter.drawText(labelRect, Qt::AlignCenter, component.label);
+
+    painter.restore();
+}
+
+void CircuitCanvas::drawComponentStateText(QPainter &painter, const PlacedComponent &component) const
+{
+    QString stateText;
+
+    if (component.typeName == "Switch") {
+        stateText = component.stateOn ? "ON" : "OFF";
+    } else if (component.typeName == "VoltageSource") {
+        stateText = component.stateOn ? "1" : "0";
+    } else if (component.typeName == "Led") {
+        stateText = component.stateOn ? "ON" : "OFF";
+    } else if (component.typeName == "AndGate" || component.typeName == "OrGate") {
+        stateText = QString("A=%1 B=%2 OUT=%3")
+                        .arg(component.inputA ? 1 : 0)
+                        .arg(component.inputB ? 1 : 0)
+                        .arg(component.outputValue);
+    } else if (component.typeName == "NotGate") {
+        stateText = QString("IN=%1 OUT=%2")
+                        .arg(component.inputA ? 1 : 0)
+                        .arg(component.outputValue);
+    } else if (isLogicGate(component.typeName)) {
+        stateText = QString("OUT=%1").arg(component.outputValue);
+    } else {
+        return;
+    }
+
+    painter.save();
+
+    const bool highState = (component.typeName == "Switch" && component.stateOn)
+                           || (component.typeName == "VoltageSource" && component.stateOn)
+                           || (component.typeName == "Led" && component.stateOn)
+                           || (isLogicGate(component.typeName) && component.outputValue == 1);
+    QPen statePen(highState ? QColor(0, 130, 0) : QColor(90, 90, 90));
+    statePen.setCosmetic(true);
+    painter.setPen(statePen);
+
+    QFont stateFont = painter.font();
+    stateFont.setBold(true);
+    stateFont.setPointSize(8);
+    painter.setFont(stateFont);
+
+    const QRectF stateRect(component.position.x() - 70, component.position.y() + 48, 140, 18);
+    painter.drawText(stateRect, Qt::AlignCenter, stateText);
 
     painter.restore();
 }
@@ -560,13 +686,19 @@ void CircuitCanvas::drawInductor(QPainter &painter) const
     painter.drawPath(path);
 }
 
-void CircuitCanvas::drawDiode(QPainter &painter, bool led) const
+void CircuitCanvas::drawDiode(QPainter &painter, bool led, bool ledOn) const
 {
     painter.drawLine(-58, 0, -24, 0);
     painter.drawLine(16, 0, 58, 0);
 
     QPolygonF triangle;
     triangle << QPointF(-24, -22) << QPointF(-24, 22) << QPointF(14, 0);
+    if (led && ledOn) {
+        painter.save();
+        painter.setBrush(QColor(255, 230, 80));
+        painter.drawPolygon(triangle);
+        painter.restore();
+    }
     painter.drawPolygon(triangle);
     painter.drawLine(16, -24, 16, 24);
 
@@ -580,11 +712,11 @@ void CircuitCanvas::drawDiode(QPainter &painter, bool led) const
     }
 }
 
-void CircuitCanvas::drawSwitch(QPainter &painter) const
+void CircuitCanvas::drawSwitch(QPainter &painter, bool closed) const
 {
     painter.drawLine(-58, 0, -18, 0);
     painter.drawEllipse(QPointF(-18, 0), 3, 3);
-    painter.drawLine(-18, 0, 18, -22);
+    painter.drawLine(QPointF(-18, 0), closed ? QPointF(22, 0) : QPointF(18, -22));
     painter.drawEllipse(QPointF(22, 0), 3, 3);
     painter.drawLine(22, 0, 58, 0);
 }
@@ -597,13 +729,14 @@ void CircuitCanvas::drawGround(QPainter &painter) const
     painter.drawLine(-10, 8, 10, 8);
 }
 
-void CircuitCanvas::drawVoltageSource(QPainter &painter) const
+void CircuitCanvas::drawVoltageSource(QPainter &painter, int value) const
 {
     painter.drawLine(-58, 0, -24, 0);
     painter.drawEllipse(QPointF(0, 0), 24, 24);
     painter.drawLine(24, 0, 58, 0);
     painter.drawText(QRectF(-18, -8, 12, 16), Qt::AlignCenter, "-");
     painter.drawText(QRectF(6, -8, 12, 16), Qt::AlignCenter, "+");
+    painter.drawText(QRectF(-10, 18, 20, 16), Qt::AlignCenter, QString::number(value));
 }
 
 void CircuitCanvas::drawAndGate(QPainter &painter) const
