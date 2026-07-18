@@ -631,6 +631,10 @@ void CircuitCanvas::evaluateLogicGates()
 {
     for (PlacedComponent &component : placedComponents) {
         const QString typeName = component.component.name();
+        if (!isLogicGate(typeName)) {
+            continue;
+        }
+
         if (Pin *inputA = component.component.findPin(typeName == "NotGate" ? "IN" : "A")) {
             inputA->setState(component.inputA ? LogicState::High : LogicState::Low);
         }
