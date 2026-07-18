@@ -19,6 +19,7 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , isWiringMode(false)
     , hasWireStartPoint(false)
     , nextComponentId(1)
+    , nextWireId(1)
     , selectedComponentIndex(-1)
     , selectedWireIndex(-1)
 {
@@ -50,10 +51,24 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
     }
 
     if (event->key() == Qt::Key_Delete && selectedComponentIndex >= 0) {
+        const QString componentId = placedComponents[selectedComponentIndex].component.id();
         const QString name = componentDisplayName(placedComponents[selectedComponentIndex].component.name());
+        int deletedWireCount = 0;
+        for (int wireIndex = placedWires.size() - 1; wireIndex >= 0; --wireIndex) {
+            const Wire &wire = placedWires[wireIndex];
+            if (wire.startComponentId() == componentId || wire.endComponentId() == componentId) {
+                placedWires.removeAt(wireIndex);
+                ++deletedWireCount;
+            }
+        }
         placedComponents.removeAt(selectedComponentIndex);
         selectedComponentIndex = -1;
-        emit actionOccurred(QString("Deleted component: %1").arg(name));
+        selectedWireIndex = -1;
+        emit actionOccurred(deletedWireCount == 0
+                                ? QString("Deleted component: %1").arg(name)
+                                : QString("Deleted component: %1; deleted %2 connected wire(s)")
+                                      .arg(name)
+                                      .arg(deletedWireCount));
         update();
         event->accept();
         return;
@@ -71,10 +86,22 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_W) {
         isWiringMode = !isWiringMode;
         hasWireStartPoint = false;
+        wireStartComponentId.clear();
+        wireStartPinName.clear();
         isDraggingComponent = false;
         selectedComponentIndex = -1;
         selectedWireIndex = -1;
         emit actionOccurred(isWiringMode ? "Wire mode enabled" : "Wire mode disabled");
+        update();
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Escape && hasWireStartPoint) {
+        hasWireStartPoint = false;
+        wireStartComponentId.clear();
+        wireStartPinName.clear();
+        emit actionOccurred("Wire creation cancelled");
         update();
         event->accept();
         return;
@@ -180,25 +207,70 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
             selectedComponentIndex = -1;
             selectedWireIndex = -1;
 
+            QString componentId;
+            QString pinName;
+            QPoint pinPosition;
+            const bool pinFound = findNearestPin(worldPoint, &componentId, &pinName, &pinPosition);
+
             if (!hasWireStartPoint) {
-                wireStartPoint = snappedPoint;
-                previewWireEndPoint = snappedPoint;
+                if (!pinFound) {
+                    emit actionOccurred("Invalid wire start: click on or near a component pin");
+                    update();
+                    event->accept();
+                    return;
+                }
+
+                wireStartComponentId = componentId;
+                wireStartPinName = pinName;
+                wireStartPoint = pinPosition;
+                previewWireEndPoint = pinPosition;
                 hasWireStartPoint = true;
-                emit actionOccurred(QString("Wire started at X: %1, Y: %2")
-                                        .arg(wireStartPoint.x())
-                                        .arg(wireStartPoint.y()));
+                emit actionOccurred(QString("Wire started at %1")
+                                        .arg(pinDisplayName(componentId, pinName)));
             } else {
-                PlacedWire wire;
-                wire.startPoint = wireStartPoint;
-                wire.endPoint = snappedPoint;
-                placedWires.append(wire);
+                if (!pinFound) {
+                    emit actionOccurred("Invalid wire endpoint: click on or near a component pin");
+                    update();
+                    event->accept();
+                    return;
+                }
+                if (componentId == wireStartComponentId && pinName == wireStartPinName) {
+                    emit actionOccurred("Invalid wire endpoint: a pin cannot be connected to itself");
+                    update();
+                    event->accept();
+                    return;
+                }
+                if (isDuplicateConnection(wireStartComponentId, wireStartPinName,
+                                          componentId, pinName)) {
+                    emit actionOccurred("Duplicate connection rejected");
+                    update();
+                    event->accept();
+                    return;
+                }
+
+                const Pin *startPin = findPin(wireStartComponentId, wireStartPinName);
+                const Pin *endPin = findPin(componentId, pinName);
+                if (startPin == nullptr || endPin == nullptr
+                    || !pinDirectionsAreCompatible(*startPin, *endPin)) {
+                    emit actionOccurred("Invalid pin direction: Input-to-Input and Output-to-Output connections are not allowed");
+                    update();
+                    event->accept();
+                    return;
+                }
+
+                const QString startDisplayName = pinDisplayName(wireStartComponentId, wireStartPinName);
+                const QString endDisplayName = pinDisplayName(componentId, pinName);
+                placedWires.append(Wire(createWireId(),
+                                        wireStartComponentId,
+                                        wireStartPinName,
+                                        componentId,
+                                        pinName));
                 selectedWireIndex = placedWires.size() - 1;
                 hasWireStartPoint = false;
-                emit actionOccurred(QString("Wire placed from X: %1, Y: %2 to X: %3, Y: %4")
-                                        .arg(wire.startPoint.x())
-                                        .arg(wire.startPoint.y())
-                                        .arg(wire.endPoint.x())
-                                        .arg(wire.endPoint.y()));
+                wireStartComponentId.clear();
+                wireStartPinName.clear();
+                emit actionOccurred(QString("Connected %1 to %2")
+                                        .arg(startDisplayName, endDisplayName));
             }
 
             update();
@@ -402,7 +474,12 @@ int CircuitCanvas::wireAt(const QPoint &worldPoint) const
     constexpr double HitTolerance = 8.0;
 
     for (int i = placedWires.size() - 1; i >= 0; --i) {
-        const QVector<QPoint> path = orthogonalWirePath(placedWires[i].startPoint, placedWires[i].endPoint);
+        QPoint startPoint;
+        QPoint endPoint;
+        if (!wireEndpoints(placedWires[i], &startPoint, &endPoint)) {
+            continue;
+        }
+        const QVector<QPoint> path = orthogonalWirePath(startPoint, endPoint);
 
         for (int pointIndex = 0; pointIndex + 1 < path.size(); ++pointIndex) {
             if (distanceToSegment(worldPoint, path[pointIndex], path[pointIndex + 1]) <= HitTolerance) {
@@ -548,9 +625,86 @@ bool CircuitCanvas::findNearestPin(const QPoint &worldPoint,
     return true;
 }
 
+const CircuitCanvas::PlacedComponent *CircuitCanvas::findComponent(const QString &componentId) const
+{
+    for (const PlacedComponent &component : placedComponents) {
+        if (component.component.id() == componentId) {
+            return &component;
+        }
+    }
+    return nullptr;
+}
+
+const Pin *CircuitCanvas::findPin(const QString &componentId, const QString &pinName) const
+{
+    const PlacedComponent *component = findComponent(componentId);
+    return component == nullptr ? nullptr : component->component.findPin(pinName);
+}
+
+bool CircuitCanvas::wireEndpoints(const Wire &wire, QPoint *startPoint, QPoint *endPoint) const
+{
+    const PlacedComponent *startComponent = findComponent(wire.startComponentId());
+    const PlacedComponent *endComponent = findComponent(wire.endComponentId());
+    if (startComponent == nullptr || endComponent == nullptr) {
+        return false;
+    }
+
+    const Pin *startPin = startComponent->component.findPin(wire.startPinName());
+    const Pin *endPin = endComponent->component.findPin(wire.endPinName());
+    if (startPin == nullptr || endPin == nullptr) {
+        return false;
+    }
+
+    if (startPoint != nullptr) {
+        *startPoint = pinWorldPosition(*startComponent, *startPin);
+    }
+    if (endPoint != nullptr) {
+        *endPoint = pinWorldPosition(*endComponent, *endPin);
+    }
+    return true;
+}
+
+bool CircuitCanvas::isDuplicateConnection(const QString &startComponentId,
+                                          const QString &startPinName,
+                                          const QString &endComponentId,
+                                          const QString &endPinName) const
+{
+    for (const Wire &wire : placedWires) {
+        const bool sameDirection = wire.startComponentId() == startComponentId
+                                   && wire.startPinName() == startPinName
+                                   && wire.endComponentId() == endComponentId
+                                   && wire.endPinName() == endPinName;
+        const bool reverseDirection = wire.startComponentId() == endComponentId
+                                      && wire.startPinName() == endPinName
+                                      && wire.endComponentId() == startComponentId
+                                      && wire.endPinName() == startPinName;
+        if (sameDirection || reverseDirection) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CircuitCanvas::pinDirectionsAreCompatible(const Pin &startPin, const Pin &endPin) const
+{
+    return !((startPin.type() == PinType::Input && endPin.type() == PinType::Input)
+             || (startPin.type() == PinType::Output && endPin.type() == PinType::Output));
+}
+
+QString CircuitCanvas::pinDisplayName(const QString &componentId, const QString &pinName) const
+{
+    const PlacedComponent *component = findComponent(componentId);
+    return QString("%1.%2").arg(component == nullptr ? componentId : component->label, pinName);
+}
+
 QString CircuitCanvas::createComponentId()
 {
     return QString("component-%1").arg(nextComponentId++);
+}
+
+QString CircuitCanvas::createWireId()
+{
+    return QString("wire-%1").arg(nextWireId++);
 }
 
 QString CircuitCanvas::componentDisplayName(const QString &typeName) const
@@ -781,9 +935,13 @@ void CircuitCanvas::drawSelectedComponentBounds(QPainter &painter, const QRectF 
     painter.drawRect(bounds.adjusted(2, 2, -2, -2));
 }
 
-void CircuitCanvas::drawWire(QPainter &painter, const PlacedWire &wire, bool selected) const
+void CircuitCanvas::drawWire(QPainter &painter, const Wire &wire, bool selected) const
 {
-    drawWirePath(painter, orthogonalWirePath(wire.startPoint, wire.endPoint), selected);
+    QPoint startPoint;
+    QPoint endPoint;
+    if (wireEndpoints(wire, &startPoint, &endPoint)) {
+        drawWirePath(painter, orthogonalWirePath(startPoint, endPoint), selected);
+    }
 }
 
 void CircuitCanvas::drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const

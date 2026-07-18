@@ -2,6 +2,7 @@
 #define CIRCUITCANVAS_H
 
 #include "component.h"
+#include "wire.h"
 
 #include <QPoint>
 #include <QPointF>
@@ -58,12 +59,6 @@ private:
         int outputValue = 0;
     };
 
-    struct PlacedWire
-    {
-        QPoint startPoint;
-        QPoint endPoint;
-    };
-
     QPointF screenToWorld(const QPoint &screenPoint) const;
     void emitMousePosition(const QPoint &screenPoint);
     int componentAt(const QPoint &worldPoint) const;
@@ -77,7 +72,17 @@ private:
                         QString *componentId,
                         QString *pinName,
                         QPoint *pinPosition = nullptr) const;
+    const PlacedComponent *findComponent(const QString &componentId) const;
+    const Pin *findPin(const QString &componentId, const QString &pinName) const;
+    bool wireEndpoints(const Wire &wire, QPoint *startPoint, QPoint *endPoint) const;
+    bool isDuplicateConnection(const QString &startComponentId,
+                               const QString &startPinName,
+                               const QString &endComponentId,
+                               const QString &endPinName) const;
+    bool pinDirectionsAreCompatible(const Pin &startPin, const Pin &endPin) const;
+    QString pinDisplayName(const QString &componentId, const QString &pinName) const;
     QString createComponentId();
+    QString createWireId();
     QString componentDisplayName(const QString &typeName) const;
     QString createComponentLabel(const QString &typeName);
     QString labelPrefix(const QString &typeName) const;
@@ -88,7 +93,7 @@ private:
     void drawComponentLabel(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentStateText(QPainter &painter, const PlacedComponent &component) const;
     void drawSelectedComponentBounds(QPainter &painter, const QRectF &bounds) const;
-    void drawWire(QPainter &painter, const PlacedWire &wire, bool selected) const;
+    void drawWire(QPainter &painter, const Wire &wire, bool selected) const;
     void drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const;
     void drawResistor(QPainter &painter) const;
     void drawCapacitor(QPainter &painter) const;
@@ -112,11 +117,14 @@ private:
     QPoint lastPanPoint;
     QPoint wireStartPoint;
     QPoint previewWireEndPoint;
+    QString wireStartComponentId;
+    QString wireStartPinName;
     QString activeComponentType;
     QVector<PlacedComponent> placedComponents;
-    QVector<PlacedWire> placedWires;
+    QVector<Wire> placedWires;
     QHash<QString, int> labelCounters;
     quint64 nextComponentId;
+    quint64 nextWireId;
     int selectedComponentIndex;
     int selectedWireIndex;
 };
