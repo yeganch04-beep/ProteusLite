@@ -1,6 +1,8 @@
 #ifndef WIRE_H
 #define WIRE_H
 
+#include "pin.h"
+
 #include <QPoint>
 #include <QString>
 #include <QVector>
@@ -19,6 +21,8 @@ public:
     QString startPinName() const;
     QString endComponentId() const;
     QString endPinName() const;
+    LogicState state() const;
+    void setState(LogicState state);
 
     const QVector<QPoint> &pathPoints() const;
     void setPathPoints(const QVector<QPoint> &pathPoints);
@@ -30,6 +34,7 @@ private:
     QString m_startPinName;
     QString m_endComponentId;
     QString m_endPinName;
+    LogicState m_state;
     QVector<QPoint> m_pathPoints;
 };
 

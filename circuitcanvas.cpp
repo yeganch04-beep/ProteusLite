@@ -4,6 +4,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStringList>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -64,11 +65,16 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
         placedComponents.removeAt(selectedComponentIndex);
         selectedComponentIndex = -1;
         selectedWireIndex = -1;
-        emit actionOccurred(deletedWireCount == 0
-                                ? QString("Deleted component: %1").arg(name)
-                                : QString("Deleted component: %1; deleted %2 connected wire(s)")
-                                      .arg(name)
-                                      .arg(deletedWireCount));
+        QString message = deletedWireCount == 0
+                              ? QString("Deleted component: %1").arg(name)
+                              : QString("Deleted component: %1; deleted %2 connected wire(s)")
+                                    .arg(name)
+                                    .arg(deletedWireCount);
+        const QString simulationStatus = evaluateCircuit();
+        if (!simulationStatus.isEmpty()) {
+            message += " - " + simulationStatus;
+        }
+        emit actionOccurred(message);
         update();
         event->accept();
         return;
@@ -77,7 +83,12 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_Delete && selectedWireIndex >= 0) {
         placedWires.removeAt(selectedWireIndex);
         selectedWireIndex = -1;
-        emit actionOccurred("Wire deleted");
+        QString message = "Wire deleted; circuit reevaluated";
+        const QString simulationStatus = evaluateCircuit();
+        if (!simulationStatus.isEmpty()) {
+            message += " - " + simulationStatus;
+        }
+        emit actionOccurred(message);
         update();
         event->accept();
         return;
@@ -108,8 +119,10 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
     }
 
     if (event->key() == Qt::Key_E) {
-        evaluateLogicGates();
-        emit actionOccurred("Logic gates evaluated");
+        const QString simulationStatus = evaluateCircuit();
+        emit actionOccurred(simulationStatus.isEmpty()
+                                ? "Circuit evaluated"
+                                : QString("Circuit evaluated - %1").arg(simulationStatus));
         update();
         event->accept();
         return;
@@ -152,36 +165,19 @@ void CircuitCanvas::mouseDoubleClickEvent(QMouseEvent *event)
     const QString typeName = component.component.name();
     if (typeName == "Switch") {
         component.stateOn = !component.stateOn;
-        component.component.findPin("OUT")->setState(component.stateOn ? LogicState::High : LogicState::Low);
-        actionMessage = QString("Switch toggled %1").arg(component.stateOn ? "ON" : "OFF");
+        actionMessage = QString("Switch toggled %1").arg(component.stateOn ? "CLOSED" : "OPEN");
     } else if (typeName == "VoltageSource") {
         component.stateOn = !component.stateOn;
-        component.component.findPin("OUT")->setState(component.stateOn ? LogicState::High : LogicState::Low);
         actionMessage = QString("Digital Voltage Source set to %1").arg(component.stateOn ? 1 : 0);
-    } else if (typeName == "Led") {
-        component.stateOn = !component.stateOn;
-        component.component.findPin("IN")->setState(component.stateOn ? LogicState::High : LogicState::Low);
-        actionMessage = QString("LED toggled %1").arg(component.stateOn ? "ON" : "OFF");
-    } else if (typeName == "AndGate" || typeName == "OrGate") {
-        const int currentInputs = (component.inputA ? 2 : 0) + (component.inputB ? 1 : 0);
-        const int nextInputs = (currentInputs + 1) % 4;
-        component.inputA = (nextInputs & 2) != 0;
-        component.inputB = (nextInputs & 1) != 0;
-        component.component.findPin("A")->setState(component.inputA ? LogicState::High : LogicState::Low);
-        component.component.findPin("B")->setState(component.inputB ? LogicState::High : LogicState::Low);
-        actionMessage = QString("%1 inputs set to A=%2 B=%3")
-                            .arg(componentDisplayName(typeName))
-                            .arg(component.inputA ? 1 : 0)
-                            .arg(component.inputB ? 1 : 0);
-    } else if (typeName == "NotGate") {
-        component.inputA = !component.inputA;
-        component.component.findPin("IN")->setState(component.inputA ? LogicState::High : LogicState::Low);
-        actionMessage = QString("NOT Gate input set to IN=%1").arg(component.inputA ? 1 : 0);
     } else {
         QWidget::mouseDoubleClickEvent(event);
         return;
     }
 
+    const QString simulationStatus = evaluateCircuit();
+    if (!simulationStatus.isEmpty()) {
+        actionMessage += " - " + simulationStatus;
+    }
     emit actionOccurred(QString("%1 - Component state changed: %2").arg(actionMessage, component.label));
     update();
     event->accept();
@@ -257,6 +253,15 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
                     event->accept();
                     return;
                 }
+                if ((startPin->type() == PinType::Input
+                     && pinHasConnection(wireStartComponentId, wireStartPinName))
+                    || (endPin->type() == PinType::Input
+                        && pinHasConnection(componentId, pinName))) {
+                    emit actionOccurred("Input pin already has a connection; a second independent connection is not allowed");
+                    update();
+                    event->accept();
+                    return;
+                }
 
                 const QString startDisplayName = pinDisplayName(wireStartComponentId, wireStartPinName);
                 const QString endDisplayName = pinDisplayName(componentId, pinName);
@@ -269,8 +274,13 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
                 hasWireStartPoint = false;
                 wireStartComponentId.clear();
                 wireStartPinName.clear();
-                emit actionOccurred(QString("Connected %1 to %2")
-                                        .arg(startDisplayName, endDisplayName));
+                QString message = QString("Connected %1 to %2")
+                                      .arg(startDisplayName, endDisplayName);
+                const QString simulationStatus = evaluateCircuit();
+                if (!simulationStatus.isEmpty()) {
+                    message += " - " + simulationStatus;
+                }
+                emit actionOccurred(message);
             }
 
             update();
@@ -389,7 +399,10 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
     }
 
     if (isWiringMode && hasWireStartPoint) {
-        drawWirePath(painter, orthogonalWirePath(wireStartPoint, previewWireEndPoint), true);
+        drawWirePath(painter,
+                     orthogonalWirePath(wireStartPoint, previewWireEndPoint),
+                     LogicState::Undefined,
+                     true);
     }
 
     for (int i = 0; i < placedComponents.size(); ++i) {
@@ -537,15 +550,15 @@ QVector<Pin> CircuitCanvas::createPinsForComponent(const QString &typeName) cons
 
     if (typeName == "AndGate" || typeName == "OrGate") {
         return {
-            pinWithState("A", PinType::Input, QPoint(-58, -16), LogicState::Low),
-            pinWithState("B", PinType::Input, QPoint(-58, 16), LogicState::Low),
-            pinWithState("OUT", PinType::Output, QPoint(58, 0), LogicState::Low)
+            Pin("A", PinType::Input, QPoint(-58, -16)),
+            Pin("B", PinType::Input, QPoint(-58, 16)),
+            Pin("OUT", PinType::Output, QPoint(58, 0))
         };
     }
     if (typeName == "NotGate") {
         return {
-            pinWithState("IN", PinType::Input, QPoint(-58, 0), LogicState::Low),
-            pinWithState("OUT", PinType::Output, QPoint(58, 0), LogicState::Low)
+            Pin("IN", PinType::Input, QPoint(-58, 0)),
+            Pin("OUT", PinType::Output, QPoint(58, 0))
         };
     }
     if (typeName == "VoltageSource") {
@@ -553,15 +566,15 @@ QVector<Pin> CircuitCanvas::createPinsForComponent(const QString &typeName) cons
     }
     if (typeName == "Switch") {
         return {
-            pinWithState("IN", PinType::Input, QPoint(-58, 0), LogicState::Low),
-            pinWithState("OUT", PinType::Output, QPoint(58, 0), LogicState::Low)
+            Pin("IN", PinType::Input, QPoint(-58, 0)),
+            Pin("OUT", PinType::Output, QPoint(58, 0))
         };
     }
     if (typeName == "Led") {
-        return {pinWithState("IN", PinType::Input, QPoint(-58, 0), LogicState::Low)};
+        return {Pin("IN", PinType::Input, QPoint(-58, 0))};
     }
     if (typeName == "Ground") {
-        return {Pin("GND", PinType::Bidirectional, QPoint(0, -38))};
+        return {pinWithState("GND", PinType::Bidirectional, QPoint(0, -38), LogicState::Low)};
     }
     if (typeName == "Resistor" || typeName == "Capacitor"
         || typeName == "Inductor" || typeName == "Diode") {
@@ -635,9 +648,25 @@ const CircuitCanvas::PlacedComponent *CircuitCanvas::findComponent(const QString
     return nullptr;
 }
 
+CircuitCanvas::PlacedComponent *CircuitCanvas::findComponent(const QString &componentId)
+{
+    for (PlacedComponent &component : placedComponents) {
+        if (component.component.id() == componentId) {
+            return &component;
+        }
+    }
+    return nullptr;
+}
+
 const Pin *CircuitCanvas::findPin(const QString &componentId, const QString &pinName) const
 {
     const PlacedComponent *component = findComponent(componentId);
+    return component == nullptr ? nullptr : component->component.findPin(pinName);
+}
+
+Pin *CircuitCanvas::findPin(const QString &componentId, const QString &pinName)
+{
+    PlacedComponent *component = findComponent(componentId);
     return component == nullptr ? nullptr : component->component.findPin(pinName);
 }
 
@@ -689,6 +718,17 @@ bool CircuitCanvas::pinDirectionsAreCompatible(const Pin &startPin, const Pin &e
 {
     return !((startPin.type() == PinType::Input && endPin.type() == PinType::Input)
              || (startPin.type() == PinType::Output && endPin.type() == PinType::Output));
+}
+
+bool CircuitCanvas::pinHasConnection(const QString &componentId, const QString &pinName) const
+{
+    for (const Wire &wire : placedWires) {
+        if ((wire.startComponentId() == componentId && wire.startPinName() == pinName)
+            || (wire.endComponentId() == componentId && wire.endPinName() == pinName)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QString CircuitCanvas::pinDisplayName(const QString &componentId, const QString &pinName) const
@@ -776,38 +816,270 @@ QString CircuitCanvas::labelPrefix(const QString &typeName) const
     return "U";
 }
 
-bool CircuitCanvas::isLogicGate(const QString &typeName) const
+void CircuitCanvas::buildNodes()
 {
-    return typeName == "AndGate" || typeName == "OrGate" || typeName == "NotGate";
-}
-
-void CircuitCanvas::evaluateLogicGates()
-{
+    nodes.clear();
     for (PlacedComponent &component : placedComponents) {
-        const QString typeName = component.component.name();
-        if (!isLogicGate(typeName)) {
-            continue;
-        }
-
-        if (Pin *inputA = component.component.findPin(typeName == "NotGate" ? "IN" : "A")) {
-            inputA->setState(component.inputA ? LogicState::High : LogicState::Low);
-        }
-        if (Pin *inputB = component.component.findPin("B")) {
-            inputB->setState(component.inputB ? LogicState::High : LogicState::Low);
-        }
-
-        if (typeName == "AndGate") {
-            component.outputValue = (component.inputA && component.inputB) ? 1 : 0;
-        } else if (typeName == "OrGate") {
-            component.outputValue = (component.inputA || component.inputB) ? 1 : 0;
-        } else if (typeName == "NotGate") {
-            component.outputValue = component.inputA ? 0 : 1;
-        }
-
-        if (Pin *output = component.component.findPin("OUT")) {
-            output->setState(component.outputValue == 1 ? LogicState::High : LogicState::Low);
+        for (const Pin &pin : component.component.pins()) {
+            component.component.findPin(pin.name())->setConnectedNodeId(QString());
         }
     }
+
+    QVector<QString> pinReferences;
+    QHash<QString, int> referenceIndices;
+    QVector<int> parents;
+
+    auto referenceFor = [](const QString &componentId, const QString &pinName) {
+        return componentId + ":" + pinName;
+    };
+    auto registerReference = [&](const QString &reference) {
+        const auto existing = referenceIndices.constFind(reference);
+        if (existing != referenceIndices.cend()) {
+            return existing.value();
+        }
+        const int index = pinReferences.size();
+        pinReferences.append(reference);
+        referenceIndices.insert(reference, index);
+        parents.append(index);
+        return index;
+    };
+    auto findRoot = [&](int index) {
+        int root = index;
+        while (parents[root] != root) {
+            root = parents[root];
+        }
+        while (parents[index] != index) {
+            const int next = parents[index];
+            parents[index] = root;
+            index = next;
+        }
+        return root;
+    };
+
+    for (const Wire &wire : placedWires) {
+        const int startIndex = registerReference(referenceFor(wire.startComponentId(), wire.startPinName()));
+        const int endIndex = registerReference(referenceFor(wire.endComponentId(), wire.endPinName()));
+        const int startRoot = findRoot(startIndex);
+        const int endRoot = findRoot(endIndex);
+        if (startRoot != endRoot) {
+            parents[endRoot] = startRoot;
+        }
+    }
+
+    QHash<int, int> nodeIndexByRoot;
+    for (int referenceIndex = 0; referenceIndex < pinReferences.size(); ++referenceIndex) {
+        const int root = findRoot(referenceIndex);
+        if (!nodeIndexByRoot.contains(root)) {
+            nodeIndexByRoot.insert(root, nodes.size());
+            nodes.append(Node(QString("node-%1").arg(nodes.size() + 1)));
+        }
+        nodes[nodeIndexByRoot.value(root)].addConnectedPinRef(pinReferences[referenceIndex]);
+    }
+
+    for (const Wire &wire : placedWires) {
+        const QString startReference = referenceFor(wire.startComponentId(), wire.startPinName());
+        const int root = findRoot(referenceIndices.value(startReference));
+        nodes[nodeIndexByRoot.value(root)].addWireId(wire.id());
+    }
+
+    for (PlacedComponent &component : placedComponents) {
+        for (const Pin &pin : component.component.pins()) {
+            const QString reference = referenceFor(component.component.id(), pin.name());
+            const auto referenceIndex = referenceIndices.constFind(reference);
+            if (referenceIndex == referenceIndices.cend()) {
+                continue;
+            }
+            const int root = findRoot(referenceIndex.value());
+            component.component.findPin(pin.name())->setConnectedNodeId(nodes[nodeIndexByRoot.value(root)].id());
+        }
+    }
+}
+
+QString CircuitCanvas::evaluateCircuit()
+{
+    constexpr int MaximumIterations = 100;
+    buildNodes();
+
+    auto setPinState = [](Pin *pin, LogicState state) {
+        if (pin == nullptr || pin->state() == state) {
+            return false;
+        }
+        pin->setState(state);
+        return true;
+    };
+
+    for (PlacedComponent &component : placedComponents) {
+        const QString typeName = component.component.name();
+        for (const Pin &pin : component.component.pins()) {
+            LogicState initialState = LogicState::Undefined;
+            if (typeName == "VoltageSource" && pin.name() == "OUT") {
+                initialState = component.stateOn ? LogicState::High : LogicState::Low;
+            } else if (typeName == "Ground" && pin.name() == "GND") {
+                initialState = LogicState::Low;
+            }
+            component.component.findPin(pin.name())->setState(initialState);
+        }
+        if (typeName == "Led") {
+            component.stateOn = false;
+        }
+    }
+
+    bool stabilized = false;
+    QStringList conflictingNodeIds;
+
+    for (int iteration = 0; iteration < MaximumIterations; ++iteration) {
+        bool changed = false;
+        conflictingNodeIds.clear();
+
+        for (Node &node : nodes) {
+            bool hasHighDriver = false;
+            bool hasLowDriver = false;
+
+            for (const PlacedComponent &component : placedComponents) {
+                const QString typeName = component.component.name();
+                for (const Pin &pin : component.component.pins()) {
+                    if (pin.connectedNodeId() != node.id()) {
+                        continue;
+                    }
+                    const bool isDriver = pin.type() == PinType::Output
+                                          || (typeName == "Ground" && pin.name() == "GND");
+                    if (!isDriver) {
+                        continue;
+                    }
+                    hasHighDriver = hasHighDriver || pin.state() == LogicState::High;
+                    hasLowDriver = hasLowDriver || pin.state() == LogicState::Low;
+                }
+            }
+
+            LogicState nodeState = LogicState::Undefined;
+            if (hasHighDriver && hasLowDriver) {
+                conflictingNodeIds.append(node.id());
+            } else if (hasHighDriver) {
+                nodeState = LogicState::High;
+            } else if (hasLowDriver) {
+                nodeState = LogicState::Low;
+            }
+            if (node.state() != nodeState) {
+                node.setState(nodeState);
+                changed = true;
+            }
+        }
+
+        for (PlacedComponent &component : placedComponents) {
+            const QString typeName = component.component.name();
+            for (const Pin &pin : component.component.pins()) {
+                if (pin.connectedNodeId().isEmpty()) {
+                    continue;
+                }
+                if (pin.type() == PinType::Output
+                    || (typeName == "Ground" && pin.name() == "GND")) {
+                    continue;
+                }
+                LogicState nodeState = LogicState::Undefined;
+                for (const Node &node : nodes) {
+                    if (node.id() == pin.connectedNodeId()) {
+                        nodeState = node.state();
+                        break;
+                    }
+                }
+                changed = setPinState(component.component.findPin(pin.name()), nodeState) || changed;
+            }
+
+            if (typeName == "VoltageSource") {
+                changed = setPinState(component.component.findPin("OUT"),
+                                      component.stateOn ? LogicState::High : LogicState::Low) || changed;
+            } else if (typeName == "Ground") {
+                changed = setPinState(component.component.findPin("GND"), LogicState::Low) || changed;
+            } else if (typeName == "Switch") {
+                const Pin *input = component.component.findPin("IN");
+                changed = setPinState(component.component.findPin("OUT"),
+                                      component.stateOn && input != nullptr
+                                          ? input->state()
+                                          : LogicState::Undefined) || changed;
+            } else if (typeName == "AndGate" || typeName == "OrGate") {
+                const LogicState inputA = component.component.findPin("A")->state();
+                const LogicState inputB = component.component.findPin("B")->state();
+                LogicState output = LogicState::Undefined;
+                if (typeName == "AndGate") {
+                    if (inputA == LogicState::Low || inputB == LogicState::Low) {
+                        output = LogicState::Low;
+                    } else if (inputA == LogicState::High && inputB == LogicState::High) {
+                        output = LogicState::High;
+                    }
+                } else {
+                    if (inputA == LogicState::High || inputB == LogicState::High) {
+                        output = LogicState::High;
+                    } else if (inputA == LogicState::Low && inputB == LogicState::Low) {
+                        output = LogicState::Low;
+                    }
+                }
+                changed = setPinState(component.component.findPin("OUT"), output) || changed;
+            } else if (typeName == "NotGate") {
+                const LogicState input = component.component.findPin("IN")->state();
+                const LogicState output = input == LogicState::Low
+                                              ? LogicState::High
+                                              : (input == LogicState::High
+                                                     ? LogicState::Low
+                                                     : LogicState::Undefined);
+                changed = setPinState(component.component.findPin("OUT"), output) || changed;
+            } else if (typeName == "Led") {
+                const Pin *input = component.component.findPin("IN");
+                component.stateOn = input != nullptr && input->state() == LogicState::High;
+            }
+        }
+
+        if (!changed) {
+            stabilized = true;
+            break;
+        }
+    }
+
+    for (Wire &wire : placedWires) {
+        wire.setState(LogicState::Undefined);
+        const Pin *startPin = findPin(wire.startComponentId(), wire.startPinName());
+        if (startPin == nullptr) {
+            continue;
+        }
+        for (const Node &node : nodes) {
+            if (node.id() == startPin->connectedNodeId()) {
+                wire.setState(node.state());
+                break;
+            }
+        }
+    }
+
+    QStringList statusParts;
+    if (!conflictingNodeIds.isEmpty()) {
+        statusParts.append(QString("Signal conflict on %1: High and Low output drivers; node state is Undefined")
+                               .arg(conflictingNodeIds.join(", ")));
+    }
+    if (!stabilized) {
+        statusParts.append(QString("Warning: circuit did not stabilize after %1 iterations")
+                               .arg(MaximumIterations));
+    }
+    return statusParts.join("; ");
+}
+
+QString CircuitCanvas::logicStateText(LogicState state) const
+{
+    if (state == LogicState::Low) {
+        return "0";
+    }
+    if (state == LogicState::High) {
+        return "1";
+    }
+    return "U";
+}
+
+QColor CircuitCanvas::logicStateColor(LogicState state) const
+{
+    if (state == LogicState::Low) {
+        return QColor(45, 95, 190);
+    }
+    if (state == LogicState::High) {
+        return QColor(0, 145, 70);
+    }
+    return QColor(125, 125, 125);
 }
 
 void CircuitCanvas::drawComponent(QPainter &painter, const PlacedComponent &component) const
@@ -847,12 +1119,12 @@ void CircuitCanvas::drawComponent(QPainter &painter, const PlacedComponent &comp
 void CircuitCanvas::drawComponentPins(QPainter &painter, const PlacedComponent &component) const
 {
     painter.save();
-    QPen pinPen(QColor(20, 65, 145), 2);
-    pinPen.setCosmetic(true);
-    painter.setPen(pinPen);
-    painter.setBrush(Qt::white);
-
     for (const Pin &pin : component.component.pins()) {
+        const QColor color = logicStateColor(pin.state());
+        QPen pinPen(color.darker(125), 2);
+        pinPen.setCosmetic(true);
+        painter.setPen(pinPen);
+        painter.setBrush(color);
         painter.drawEllipse(QPointF(pin.offset()), 4.0, 4.0);
     }
     painter.restore();
@@ -884,32 +1156,38 @@ void CircuitCanvas::drawComponentStateText(QPainter &painter, const PlacedCompon
 
     const QString typeName = component.component.name();
     if (typeName == "Switch") {
-        stateText = component.stateOn ? "ON" : "OFF";
+        stateText = QString("%1 IN=%2 OUT=%3")
+                        .arg(component.stateOn ? "CLOSED" : "OPEN",
+                             logicStateText(component.component.findPin("IN")->state()),
+                             logicStateText(component.component.findPin("OUT")->state()));
     } else if (typeName == "VoltageSource") {
-        stateText = component.stateOn ? "1" : "0";
+        stateText = QString("OUT=%1")
+                        .arg(logicStateText(component.component.findPin("OUT")->state()));
     } else if (typeName == "Led") {
-        stateText = component.stateOn ? "ON" : "OFF";
+        stateText = QString("IN=%1 %2")
+                        .arg(logicStateText(component.component.findPin("IN")->state()),
+                             component.stateOn ? "ON" : "OFF");
     } else if (typeName == "AndGate" || typeName == "OrGate") {
         stateText = QString("A=%1 B=%2 OUT=%3")
-                        .arg(component.inputA ? 1 : 0)
-                        .arg(component.inputB ? 1 : 0)
-                        .arg(component.outputValue);
+                        .arg(logicStateText(component.component.findPin("A")->state()),
+                             logicStateText(component.component.findPin("B")->state()),
+                             logicStateText(component.component.findPin("OUT")->state()));
     } else if (typeName == "NotGate") {
         stateText = QString("IN=%1 OUT=%2")
-                        .arg(component.inputA ? 1 : 0)
-                        .arg(component.outputValue);
-    } else if (isLogicGate(typeName)) {
-        stateText = QString("OUT=%1").arg(component.outputValue);
+                        .arg(logicStateText(component.component.findPin("IN")->state()),
+                             logicStateText(component.component.findPin("OUT")->state()));
+    } else if (typeName == "Ground") {
+        stateText = QString("GND=%1")
+                        .arg(logicStateText(component.component.findPin("GND")->state()));
     } else {
         return;
     }
 
     painter.save();
 
-    const bool highState = (typeName == "Switch" && component.stateOn)
-                           || (typeName == "VoltageSource" && component.stateOn)
-                           || (typeName == "Led" && component.stateOn)
-                           || (isLogicGate(typeName) && component.outputValue == 1);
+    const Pin *outputPin = component.component.findPin("OUT");
+    const bool highState = (component.stateOn && typeName == "Led")
+                           || (outputPin != nullptr && outputPin->state() == LogicState::High);
     QPen statePen(highState ? QColor(0, 130, 0) : QColor(90, 90, 90));
     statePen.setCosmetic(true);
     painter.setPen(statePen);
@@ -940,17 +1218,20 @@ void CircuitCanvas::drawWire(QPainter &painter, const Wire &wire, bool selected)
     QPoint startPoint;
     QPoint endPoint;
     if (wireEndpoints(wire, &startPoint, &endPoint)) {
-        drawWirePath(painter, orthogonalWirePath(startPoint, endPoint), selected);
+        drawWirePath(painter, orthogonalWirePath(startPoint, endPoint), wire.state(), selected);
     }
 }
 
-void CircuitCanvas::drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const
+void CircuitCanvas::drawWirePath(QPainter &painter,
+                                 const QVector<QPoint> &path,
+                                 LogicState state,
+                                 bool selected) const
 {
     if (path.size() < 2) {
         return;
     }
 
-    QPen wirePen(QColor(45, 95, 190), selected ? 4 : 2);
+    QPen wirePen(logicStateColor(state), selected ? 4 : 2);
     wirePen.setCosmetic(true);
     if (selected) {
         wirePen.setStyle(Qt::DashLine);

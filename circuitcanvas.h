@@ -2,6 +2,7 @@
 #define CIRCUITCANVAS_H
 
 #include "component.h"
+#include "node.h"
 #include "wire.h"
 
 #include <QPoint>
@@ -12,6 +13,7 @@
 #include <QWidget>
 
 class QPainter;
+class QColor;
 
 class CircuitCanvas : public QWidget
 {
@@ -54,9 +56,6 @@ private:
         QString label;
         int rotationDegrees = 0;
         bool stateOn = false;
-        bool inputA = false;
-        bool inputB = false;
-        int outputValue = 0;
     };
 
     QPointF screenToWorld(const QPoint &screenPoint) const;
@@ -73,28 +72,36 @@ private:
                         QString *pinName,
                         QPoint *pinPosition = nullptr) const;
     const PlacedComponent *findComponent(const QString &componentId) const;
+    PlacedComponent *findComponent(const QString &componentId);
     const Pin *findPin(const QString &componentId, const QString &pinName) const;
+    Pin *findPin(const QString &componentId, const QString &pinName);
     bool wireEndpoints(const Wire &wire, QPoint *startPoint, QPoint *endPoint) const;
     bool isDuplicateConnection(const QString &startComponentId,
                                const QString &startPinName,
                                const QString &endComponentId,
                                const QString &endPinName) const;
     bool pinDirectionsAreCompatible(const Pin &startPin, const Pin &endPin) const;
+    bool pinHasConnection(const QString &componentId, const QString &pinName) const;
     QString pinDisplayName(const QString &componentId, const QString &pinName) const;
     QString createComponentId();
     QString createWireId();
     QString componentDisplayName(const QString &typeName) const;
     QString createComponentLabel(const QString &typeName);
     QString labelPrefix(const QString &typeName) const;
-    bool isLogicGate(const QString &typeName) const;
-    void evaluateLogicGates();
+    void buildNodes();
+    QString evaluateCircuit();
+    QString logicStateText(LogicState state) const;
+    QColor logicStateColor(LogicState state) const;
     void drawComponent(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentPins(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentLabel(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentStateText(QPainter &painter, const PlacedComponent &component) const;
     void drawSelectedComponentBounds(QPainter &painter, const QRectF &bounds) const;
     void drawWire(QPainter &painter, const Wire &wire, bool selected) const;
-    void drawWirePath(QPainter &painter, const QVector<QPoint> &path, bool selected) const;
+    void drawWirePath(QPainter &painter,
+                      const QVector<QPoint> &path,
+                      LogicState state,
+                      bool selected) const;
     void drawResistor(QPainter &painter) const;
     void drawCapacitor(QPainter &painter) const;
     void drawInductor(QPainter &painter) const;
@@ -122,6 +129,7 @@ private:
     QString activeComponentType;
     QVector<PlacedComponent> placedComponents;
     QVector<Wire> placedWires;
+    QVector<Node> nodes;
     QHash<QString, int> labelCounters;
     quint64 nextComponentId;
     quint64 nextWireId;
