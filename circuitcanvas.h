@@ -1,6 +1,8 @@
 #ifndef CIRCUITCANVAS_H
 #define CIRCUITCANVAS_H
 
+#include "component.h"
+
 #include <QPoint>
 #include <QPointF>
 #include <QHash>
@@ -41,9 +43,14 @@ private:
 
     struct PlacedComponent
     {
-        QString typeName;
+        PlacedComponent(const Component &componentModel, const QString &displayLabel)
+            : component(componentModel)
+            , label(displayLabel)
+        {
+        }
+
+        Component component;
         QString label;
-        QPoint position;
         int rotationDegrees = 0;
         bool stateOn = false;
         bool inputA = false;
@@ -64,12 +71,20 @@ private:
     QVector<QPoint> orthogonalWirePath(const QPoint &startPoint, const QPoint &endPoint) const;
     double distanceToSegment(const QPoint &point, const QPoint &startPoint, const QPoint &endPoint) const;
     QRectF componentBounds(const QPoint &position) const;
+    QVector<Pin> createPinsForComponent(const QString &typeName) const;
+    QPoint pinWorldPosition(const PlacedComponent &component, const Pin &pin) const;
+    bool findNearestPin(const QPoint &worldPoint,
+                        QString *componentId,
+                        QString *pinName,
+                        QPoint *pinPosition = nullptr) const;
+    QString createComponentId();
     QString componentDisplayName(const QString &typeName) const;
     QString createComponentLabel(const QString &typeName);
     QString labelPrefix(const QString &typeName) const;
     bool isLogicGate(const QString &typeName) const;
     void evaluateLogicGates();
     void drawComponent(QPainter &painter, const PlacedComponent &component) const;
+    void drawComponentPins(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentLabel(QPainter &painter, const PlacedComponent &component) const;
     void drawComponentStateText(QPainter &painter, const PlacedComponent &component) const;
     void drawSelectedComponentBounds(QPainter &painter, const QRectF &bounds) const;
@@ -101,6 +116,7 @@ private:
     QVector<PlacedComponent> placedComponents;
     QVector<PlacedWire> placedWires;
     QHash<QString, int> labelCounters;
+    quint64 nextComponentId;
     int selectedComponentIndex;
     int selectedWireIndex;
 };
