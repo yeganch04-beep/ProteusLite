@@ -10,6 +10,7 @@ Wire::Wire(const QString &id,
     , m_startPinName(startPinName)
     , m_endComponentId(endComponentId)
     , m_endPinName(endPinName)
+    , m_state(LogicState::Undefined)
 {
 }
 
@@ -36,6 +37,16 @@ QString Wire::endComponentId() const
 QString Wire::endPinName() const
 {
     return m_endPinName;
+}
+
+LogicState Wire::state() const
+{
+    return m_state;
+}
+
+void Wire::setState(LogicState state)
+{
+    m_state = state;
 }
 
 const QVector<QPoint> &Wire::pathPoints() const
