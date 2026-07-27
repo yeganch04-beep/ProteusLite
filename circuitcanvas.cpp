@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QStringList>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -19,6 +20,8 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , isDraggingComponent(false)
     , isWiringMode(false)
     , hasWireStartPoint(false)
+    , simulationTimer(new QTimer(this))
+    , currentSimulationState(SimulationState::Stopped)
     , nextComponentId(1)
     , nextWireId(1)
     , selectedComponentIndex(-1)
@@ -27,6 +30,16 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(400, 300);
+
+    simulationTimer->setInterval(SimulationIntervalMs);
+    simulationTimer->setTimerType(Qt::PreciseTimer);
+    connect(simulationTimer, &QTimer::timeout,
+            this, &CircuitCanvas::performSimulationStep);
+}
+
+CircuitCanvas::~CircuitCanvas()
+{
+    simulationTimer->stop();
 }
 
 QPoint CircuitCanvas::snapToGrid(const QPoint &point) const
@@ -41,6 +54,55 @@ void CircuitCanvas::setActiveComponentType(const QString &typeName)
 {
     activeComponentType = typeName;
     emit actionOccurred(QString("Selected component: %1").arg(componentDisplayName(typeName)));
+}
+
+CircuitCanvas::SimulationState CircuitCanvas::simulationState() const
+{
+    return currentSimulationState;
+}
+
+void CircuitCanvas::runSimulation()
+{
+    if (currentSimulationState == SimulationState::Running) {
+        return;
+    }
+
+    const bool resuming = currentSimulationState == SimulationState::Paused;
+    setSimulationState(SimulationState::Running);
+    performSimulationStep();
+    simulationTimer->start();
+    emit actionOccurred(resuming ? "Simulation resumed" : "Simulation started");
+}
+
+void CircuitCanvas::pauseSimulation()
+{
+    if (currentSimulationState != SimulationState::Running) {
+        return;
+    }
+
+    simulationTimer->stop();
+    setSimulationState(SimulationState::Paused);
+    emit actionOccurred("Simulation paused");
+}
+
+void CircuitCanvas::stopSimulation()
+{
+    simulationTimer->stop();
+    if (currentSimulationState == SimulationState::Stopped) {
+        return;
+    }
+
+    setSimulationState(SimulationState::Stopped);
+    emit actionOccurred("Simulation stopped");
+}
+
+void CircuitCanvas::resetSimulation()
+{
+    simulationTimer->stop();
+    resetSimulationRuntime();
+    setSimulationState(SimulationState::Stopped);
+    emit actionOccurred("Simulation reset");
+    update();
 }
 
 void CircuitCanvas::keyPressEvent(QKeyEvent *event)
@@ -1058,6 +1120,52 @@ QString CircuitCanvas::evaluateCircuit()
                                .arg(MaximumIterations));
     }
     return statusParts.join("; ");
+}
+
+void CircuitCanvas::performSimulationStep()
+{
+    if (currentSimulationState != SimulationState::Running) {
+        return;
+    }
+
+    evaluateCircuit();
+    update();
+}
+
+void CircuitCanvas::resetSimulationRuntime()
+{
+    nodes.clear();
+
+    for (PlacedComponent &component : placedComponents) {
+        component.stateOn = false;
+        const QString typeName = component.component.name();
+
+        for (const Pin &pin : component.component.pins()) {
+            Pin *runtimePin = component.component.findPin(pin.name());
+            if (runtimePin == nullptr) {
+                continue;
+            }
+
+            const bool initiallyLow = (typeName == "VoltageSource" && pin.name() == "OUT")
+                                      || (typeName == "Ground" && pin.name() == "GND");
+            runtimePin->setState(initiallyLow ? LogicState::Low : LogicState::Undefined);
+            runtimePin->setConnectedNodeId(QString());
+        }
+    }
+
+    for (Wire &wire : placedWires) {
+        wire.setState(LogicState::Undefined);
+    }
+}
+
+void CircuitCanvas::setSimulationState(SimulationState state)
+{
+    if (currentSimulationState == state) {
+        return;
+    }
+
+    currentSimulationState = state;
+    emit simulationStateChanged(currentSimulationState);
 }
 
 QString CircuitCanvas::logicStateText(LogicState state) const
