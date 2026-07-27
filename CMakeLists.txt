@@ -43,6 +43,51 @@ target_link_libraries(ProteusLite
         Qt::Widgets
 )
 
+include(CTest)
+
+if(BUILD_TESTING)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+
+    qt_add_executable(ProteusLiteSimulationControlsTests
+        tests/simulationcontrolstest.cpp
+        circuitcanvas.cpp
+        circuitcanvas.h
+        component.cpp
+        component.h
+        componentlistwidget.cpp
+        componentlistwidget.h
+        mainwindow.cpp
+        mainwindow.h
+        mainwindow.ui
+        newprojectdialog.cpp
+        newprojectdialog.h
+        node.cpp
+        node.h
+        pin.cpp
+        pin.h
+        startpage.cpp
+        startpage.h
+        wire.cpp
+        wire.h
+    )
+
+    target_link_libraries(ProteusLiteSimulationControlsTests
+        PRIVATE
+            Qt::Core
+            Qt::Test
+            Qt::Widgets
+    )
+    target_include_directories(ProteusLiteSimulationControlsTests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_test(NAME SimulationControls COMMAND ProteusLiteSimulationControlsTests)
+    set_tests_properties(SimulationControls PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endif()
+
 install(TARGETS ProteusLite
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

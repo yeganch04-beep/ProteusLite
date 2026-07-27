@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -21,6 +22,12 @@ MainWindow::MainWindow(QWidget *parent)
     , pageStack(new QStackedWidget(this))
     , startPage(nullptr)
     , editorPage(nullptr)
+    , circuitCanvas(nullptr)
+    , runButton(nullptr)
+    , pauseButton(nullptr)
+    , stopButton(nullptr)
+    , resetButton(nullptr)
+    , simulationStatusLabel(nullptr)
     , projectLogLabel(nullptr)
     , currentCanvasWidth(0)
     , currentCanvasHeight(0)
@@ -34,6 +41,30 @@ MainWindow::MainWindow(QWidget *parent)
 
     editorPage = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(editorPage);
+
+    auto *simulationGroupBox = new QGroupBox("Simulation", editorPage);
+    auto *simulationLayout = new QHBoxLayout(simulationGroupBox);
+    runButton = new QPushButton("Run", simulationGroupBox);
+    pauseButton = new QPushButton("Pause", simulationGroupBox);
+    stopButton = new QPushButton("Stop", simulationGroupBox);
+    resetButton = new QPushButton("Reset", simulationGroupBox);
+    simulationStatusLabel = new QLabel(simulationGroupBox);
+
+    runButton->setObjectName("simulationRunButton");
+    pauseButton->setObjectName("simulationPauseButton");
+    stopButton->setObjectName("simulationStopButton");
+    resetButton->setObjectName("simulationResetButton");
+    simulationStatusLabel->setObjectName("simulationStatusLabel");
+    simulationStatusLabel->setAlignment(Qt::AlignCenter);
+    simulationStatusLabel->setMinimumWidth(130);
+
+    simulationLayout->addWidget(runButton);
+    simulationLayout->addWidget(pauseButton);
+    simulationLayout->addWidget(stopButton);
+    simulationLayout->addWidget(resetButton);
+    simulationLayout->addStretch();
+    simulationLayout->addWidget(simulationStatusLabel);
+
     auto *workspaceLayout = new QHBoxLayout();
 
     auto *componentsGroupBox = new QGroupBox("Components", editorPage);
@@ -54,6 +85,7 @@ MainWindow::MainWindow(QWidget *parent)
     logGroupBox->setMaximumHeight(160);
     auto *logLayout = new QVBoxLayout(logGroupBox);
 
+    mainLayout->addWidget(simulationGroupBox);
     mainLayout->addLayout(workspaceLayout);
     mainLayout->addWidget(logGroupBox);
 
@@ -61,8 +93,8 @@ MainWindow::MainWindow(QWidget *parent)
     pageStack->addWidget(editorPage);
     setCentralWidget(pageStack);
 
-    auto *canvas = new CircuitCanvas(this);
-    canvasLayout->addWidget(canvas);
+    circuitCanvas = new CircuitCanvas(this);
+    canvasLayout->addWidget(circuitCanvas);
 
     projectLogLabel = new QLabel("No project created yet.", this);
     logLayout->addWidget(projectLogLabel);
@@ -73,26 +105,41 @@ MainWindow::MainWindow(QWidget *parent)
     auto *zoomLabel = new QLabel("Zoom: 100%", this);
     logLayout->addWidget(zoomLabel);
 
-    connect(canvas, &CircuitCanvas::mousePositionChanged, this,
+    connect(circuitCanvas, &CircuitCanvas::mousePositionChanged, this,
             [coordinatesLabel](const QPoint &position) {
                 coordinatesLabel->setText(
                     QString("X: %1, Y: %2").arg(position.x()).arg(position.y()));
             });
 
-    connect(canvas, &CircuitCanvas::zoomChanged, this,
+    connect(circuitCanvas, &CircuitCanvas::zoomChanged, this,
             [zoomLabel](int percentage) {
                 zoomLabel->setText(QString("Zoom: %1%").arg(percentage));
             });
 
     connect(componentList, &ComponentListWidget::componentTypeSelected,
-            canvas, &CircuitCanvas::setActiveComponentType);
+            circuitCanvas, &CircuitCanvas::setActiveComponentType);
 
-    connect(canvas, &CircuitCanvas::actionOccurred, this,
+    connect(circuitCanvas, &CircuitCanvas::actionOccurred, this,
             [this](const QString &message) {
                 if (projectLogLabel != nullptr) {
                     projectLogLabel->setText(message);
                 }
             });
+
+    connect(runButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::runSimulation);
+    connect(pauseButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::pauseSimulation);
+    connect(stopButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::stopSimulation);
+    connect(resetButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::resetSimulation);
+    connect(circuitCanvas, &CircuitCanvas::simulationStateChanged, this,
+            [this](CircuitCanvas::SimulationState) {
+                updateSimulationControls();
+            });
+
+    updateSimulationControls();
 
     createMenuActions();
     showStartPage();
@@ -100,6 +147,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    if (circuitCanvas != nullptr) {
+        circuitCanvas->stopSimulation();
+    }
     delete ui;
 }
 
@@ -172,6 +222,45 @@ void MainWindow::showEditorPage(const QString &projectName, int canvasWidth, int
 
 void MainWindow::showStartPage()
 {
+    if (circuitCanvas != nullptr) {
+        circuitCanvas->stopSimulation();
+    }
     setWindowTitle("ProteusLite");
     pageStack->setCurrentWidget(startPage);
+}
+
+void MainWindow::updateSimulationControls()
+{
+    if (circuitCanvas == nullptr) {
+        return;
+    }
+
+    const CircuitCanvas::SimulationState state = circuitCanvas->simulationState();
+    const bool isStopped = state == CircuitCanvas::SimulationState::Stopped;
+    const bool isRunning = state == CircuitCanvas::SimulationState::Running;
+    const bool isPaused = state == CircuitCanvas::SimulationState::Paused;
+
+    runButton->setEnabled(!isRunning);
+    runButton->setText("Run");
+    runButton->setToolTip(isPaused ? "Resume simulation" : "Start simulation");
+    pauseButton->setEnabled(isRunning);
+    stopButton->setEnabled(!isStopped);
+    resetButton->setEnabled(true);
+
+    if (isRunning) {
+        simulationStatusLabel->setText("Running");
+        simulationStatusLabel->setStyleSheet(
+            "QLabel { color: #145a32; background: #d5f5e3; border: 1px solid #58d68d; "
+            "border-radius: 4px; padding: 4px 10px; font-weight: bold; }");
+    } else if (isPaused) {
+        simulationStatusLabel->setText("Paused");
+        simulationStatusLabel->setStyleSheet(
+            "QLabel { color: #7d6608; background: #fcf3cf; border: 1px solid #f4d03f; "
+            "border-radius: 4px; padding: 4px 10px; font-weight: bold; }");
+    } else {
+        simulationStatusLabel->setText("Stopped");
+        simulationStatusLabel->setStyleSheet(
+            "QLabel { color: #424949; background: #e5e7e9; border: 1px solid #aab7b8; "
+            "border-radius: 4px; padding: 4px 10px; font-weight: bold; }");
+    }
 }

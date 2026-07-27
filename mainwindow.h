@@ -4,7 +4,9 @@
 #include <QMainWindow>
 
 class QLabel;
+class QPushButton;
 class QStackedWidget;
+class CircuitCanvas;
 class StartPage;
 
 QT_BEGIN_NAMESPACE
@@ -28,11 +30,18 @@ private:
     void openProjectPlaceholder();
     void showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight);
     void showStartPage();
+    void updateSimulationControls();
 
     Ui::MainWindow *ui;
     QStackedWidget *pageStack;
     StartPage *startPage;
     QWidget *editorPage;
+    CircuitCanvas *circuitCanvas;
+    QPushButton *runButton;
+    QPushButton *pauseButton;
+    QPushButton *stopButton;
+    QPushButton *resetButton;
+    QLabel *simulationStatusLabel;
     QLabel *projectLogLabel;
     int currentCanvasWidth;
     int currentCanvasHeight;

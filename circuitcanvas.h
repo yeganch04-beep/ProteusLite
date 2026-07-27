@@ -14,20 +14,38 @@
 
 class QPainter;
 class QColor;
+class QTimer;
 
 class CircuitCanvas : public QWidget
 {
     Q_OBJECT
 
 public:
+    enum class SimulationState
+    {
+        Stopped,
+        Running,
+        Paused
+    };
+    Q_ENUM(SimulationState)
+
     explicit CircuitCanvas(QWidget *parent = nullptr);
+    ~CircuitCanvas() override;
 
     QPoint snapToGrid(const QPoint &point) const;
     void setActiveComponentType(const QString &typeName);
+    SimulationState simulationState() const;
+
+public slots:
+    void runSimulation();
+    void pauseSimulation();
+    void stopSimulation();
+    void resetSimulation();
 
 signals:
     void actionOccurred(const QString &message);
     void mousePositionChanged(const QPoint &position);
+    void simulationStateChanged(CircuitCanvas::SimulationState state);
     void zoomChanged(int percentage);
 
 protected:
@@ -41,6 +59,7 @@ protected:
 
 private:
     static constexpr int GridSpacing = 20;
+    static constexpr int SimulationIntervalMs = 100;
     static constexpr double MinimumZoom = 0.5;
     static constexpr double MaximumZoom = 2.0;
 
@@ -90,6 +109,9 @@ private:
     QString labelPrefix(const QString &typeName) const;
     void buildNodes();
     QString evaluateCircuit();
+    void performSimulationStep();
+    void resetSimulationRuntime();
+    void setSimulationState(SimulationState state);
     QString logicStateText(LogicState state) const;
     QColor logicStateColor(LogicState state) const;
     void drawComponent(QPainter &painter, const PlacedComponent &component) const;
@@ -131,6 +153,8 @@ private:
     QVector<Wire> placedWires;
     QVector<Node> nodes;
     QHash<QString, int> labelCounters;
+    QTimer *simulationTimer;
+    SimulationState currentSimulationState;
     quint64 nextComponentId;
     quint64 nextWireId;
     int selectedComponentIndex;
