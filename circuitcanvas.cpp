@@ -1592,14 +1592,14 @@ void CircuitCanvas::drawVoltageSource(QPainter &painter, int value) const
     painter.drawLine(24, 0, 58, 0);
     painter.drawText(QRectF(-18, -8, 12, 16), Qt::AlignCenter, "-");
     painter.drawText(QRectF(6, -8, 12, 16), Qt::AlignCenter, "+");
-    painter.drawText(QRectF(-10, 18, 20, 16), Qt::AlignCenter, QString::number(value));
+    painter.drawText(QRectF(-10, 24, 20, 16), Qt::AlignCenter, QString::number(value));
 }
 
 void CircuitCanvas::drawAndGate(QPainter &painter) const
 {
     painter.drawLine(-58, -16, -28, -16);
     painter.drawLine(-58, 16, -28, 16);
-    painter.drawLine(24, 0, 58, 0);
+    painter.drawLine(30, 0, 58, 0);
 
     QPainterPath path;
     path.moveTo(-28, -30);
