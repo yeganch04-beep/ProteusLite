@@ -4,6 +4,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRegularExpression>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
@@ -59,6 +61,164 @@ void CircuitCanvas::setActiveComponentType(const QString &typeName)
 CircuitCanvas::SimulationState CircuitCanvas::simulationState() const
 {
     return currentSimulationState;
+}
+
+ProjectFileData CircuitCanvas::projectData(const QString &projectName,
+                                           const QSize &canvasSize) const
+{
+    ProjectFileData project;
+    project.projectName = projectName;
+    project.canvasSize = canvasSize;
+    project.components.reserve(placedComponents.size());
+    project.wires.reserve(placedWires.size());
+
+    for (const PlacedComponent &placed : placedComponents) {
+        ProjectComponentData component;
+        component.id = placed.component.id();
+        component.type = placed.component.name();
+        component.label = placed.label;
+        component.position = placed.component.position();
+        component.rotationDegrees = placed.rotationDegrees;
+        component.stateOn = placed.stateOn;
+        project.components.append(component);
+    }
+
+    for (const Wire &placed : placedWires) {
+        ProjectWireData wire;
+        wire.id = placed.id();
+        wire.startComponentId = placed.startComponentId();
+        wire.startPinName = placed.startPinName();
+        wire.endComponentId = placed.endComponentId();
+        wire.endPinName = placed.endPinName();
+        project.wires.append(wire);
+    }
+
+    return project;
+}
+
+bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
+                                    QString *errorMessage)
+{
+    auto fail = [&](const QString &message) {
+        placedComponents.clear();
+        placedWires.clear();
+        nodes.clear();
+        labelCounters.clear();
+        nextComponentId = 1;
+        nextWireId = 1;
+        selectedComponentIndex = -1;
+        selectedWireIndex = -1;
+        if (errorMessage != nullptr) {
+            *errorMessage = message;
+        }
+        update();
+        return false;
+    };
+
+    stopSimulation();
+    placedComponents.clear();
+    placedWires.clear();
+    nodes.clear();
+    labelCounters.clear();
+    activeComponentType.clear();
+    selectedComponentIndex = -1;
+    selectedWireIndex = -1;
+    isDraggingComponent = false;
+    isWiringMode = false;
+    hasWireStartPoint = false;
+    wireStartComponentId.clear();
+    wireStartPinName.clear();
+
+    QSet<QString> componentIds;
+    quint64 maximumComponentId = 0;
+    quint64 maximumWireId = 0;
+    const QRegularExpression componentIdPattern("^component-(\\d+)$");
+    const QRegularExpression wireIdPattern("^wire-(\\d+)$");
+    const QRegularExpression labelPattern("^(.+?)(\\d+)$");
+
+    for (const ProjectComponentData &stored : project.components) {
+        if (stored.id.trimmed().isEmpty() || componentIds.contains(stored.id)) {
+            return fail(QString("Invalid or duplicate component id: %1").arg(stored.id));
+        }
+        const QVector<Pin> pins = createPinsForComponent(stored.type);
+        if (pins.isEmpty()) {
+            return fail(QString("Unsupported component type: %1").arg(stored.type));
+        }
+
+        Component model(stored.id, stored.type, stored.position);
+        for (const Pin &pin : pins) {
+            model.addPin(pin);
+        }
+        PlacedComponent placed(model, stored.label);
+        placed.rotationDegrees = ((stored.rotationDegrees % 360) + 360) % 360;
+        placed.stateOn = stored.stateOn;
+        placedComponents.append(placed);
+        componentIds.insert(stored.id);
+
+        const QRegularExpressionMatch idMatch = componentIdPattern.match(stored.id);
+        if (idMatch.hasMatch()) {
+            maximumComponentId = std::max(maximumComponentId, idMatch.captured(1).toULongLong());
+        }
+        const QRegularExpressionMatch labelMatch = labelPattern.match(stored.label);
+        if (labelMatch.hasMatch()) {
+            const QString prefix = labelMatch.captured(1);
+            labelCounters.insert(prefix,
+                                 std::max(labelCounters.value(prefix),
+                                          labelMatch.captured(2).toInt()));
+        }
+    }
+
+    QSet<QString> wireIds;
+    for (const ProjectWireData &stored : project.wires) {
+        if (stored.id.trimmed().isEmpty() || wireIds.contains(stored.id)) {
+            return fail(QString("Invalid or duplicate wire id: %1").arg(stored.id));
+        }
+        const Pin *startPin = findPin(stored.startComponentId, stored.startPinName);
+        const Pin *endPin = findPin(stored.endComponentId, stored.endPinName);
+        if (startPin == nullptr || endPin == nullptr) {
+            return fail(QString("Wire %1 references a missing component pin.").arg(stored.id));
+        }
+        if (!pinDirectionsAreCompatible(*startPin, *endPin)) {
+            return fail(QString("Wire %1 has incompatible pin directions.").arg(stored.id));
+        }
+        if (isDuplicateConnection(stored.startComponentId, stored.startPinName,
+                                  stored.endComponentId, stored.endPinName)) {
+            return fail(QString("Wire %1 duplicates an existing connection.").arg(stored.id));
+        }
+        if ((startPin->type() == PinType::Input
+             && pinHasConnection(stored.startComponentId, stored.startPinName))
+            || (endPin->type() == PinType::Input
+                && pinHasConnection(stored.endComponentId, stored.endPinName))) {
+            return fail(QString("Wire %1 connects to an input pin that is already used.").arg(stored.id));
+        }
+
+        placedWires.append(Wire(stored.id,
+                                stored.startComponentId,
+                                stored.startPinName,
+                                stored.endComponentId,
+                                stored.endPinName));
+        wireIds.insert(stored.id);
+        const QRegularExpressionMatch idMatch = wireIdPattern.match(stored.id);
+        if (idMatch.hasMatch()) {
+            maximumWireId = std::max(maximumWireId, idMatch.captured(1).toULongLong());
+        }
+    }
+
+    nextComponentId = maximumComponentId + 1;
+    nextWireId = maximumWireId + 1;
+    resetSimulationRuntime();
+    for (int index = 0; index < placedComponents.size(); ++index) {
+        placedComponents[index].stateOn = project.components[index].stateOn;
+    }
+    evaluateCircuit();
+    if (errorMessage != nullptr) {
+        errorMessage->clear();
+    }
+    emit actionOccurred(QString("Loaded %1 component(s) and %2 wire(s)")
+                            .arg(placedComponents.size())
+                            .arg(placedWires.size()));
+    update();
+    return true;
 }
 
 void CircuitCanvas::runSimulation()

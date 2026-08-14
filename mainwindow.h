@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QString>
 
 class QLabel;
 class QPushButton;
@@ -27,7 +28,10 @@ private:
     void createStartPage();
     void createMenuActions();
     void createNewProject();
-    void openProjectPlaceholder();
+    void openProject();
+    void saveProject();
+    void saveProjectAs();
+    bool writeProjectFile(const QString &fileName);
     void showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight);
     void showStartPage();
     void updateSimulationControls();
@@ -43,6 +47,8 @@ private:
     QPushButton *resetButton;
     QLabel *simulationStatusLabel;
     QLabel *projectLogLabel;
+    QString currentProjectName;
+    QString currentProjectFilePath;
     int currentCanvasWidth;
     int currentCanvasHeight;
 };

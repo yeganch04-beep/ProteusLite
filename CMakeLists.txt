@@ -31,6 +31,8 @@ qt_add_executable(ProteusLite
     node.h
     pin.cpp
     pin.h
+    projectfile.cpp
+    projectfile.h
     startpage.cpp
     startpage.h
     wire.cpp
@@ -65,6 +67,8 @@ if(BUILD_TESTING)
         node.h
         pin.cpp
         pin.h
+        projectfile.cpp
+        projectfile.h
         startpage.cpp
         startpage.h
         wire.cpp
@@ -86,6 +90,22 @@ if(BUILD_TESTING)
     set_tests_properties(SimulationControls PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    qt_add_executable(ProteusLiteProjectFileTests
+        tests/projectfiletest.cpp
+        projectfile.cpp
+        projectfile.h
+    )
+    target_link_libraries(ProteusLiteProjectFileTests
+        PRIVATE
+            Qt::Core
+            Qt::Test
+    )
+    target_include_directories(ProteusLiteProjectFileTests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    add_test(NAME ProjectFile COMMAND ProteusLiteProjectFileTests)
 endif()
 
 install(TARGETS ProteusLite
