@@ -3,6 +3,7 @@
 
 #include "component.h"
 #include "node.h"
+#include "projectfile.h"
 #include "wire.h"
 
 #include <QPoint>
@@ -35,6 +36,10 @@ public:
     QPoint snapToGrid(const QPoint &point) const;
     void setActiveComponentType(const QString &typeName);
     SimulationState simulationState() const;
+    ProjectFileData projectData(const QString &projectName,
+                                const QSize &canvasSize) const;
+    bool loadProjectData(const ProjectFileData &project,
+                         QString *errorMessage = nullptr);
 
 public slots:
     void runSimulation();

@@ -15,6 +15,7 @@ private slots:
     void engineStateTransitions();
     void buttonStateRules();
     void resetPreservesCircuitAndRestoresInitialValues();
+    void projectDataRoundTripPreservesComponents();
 };
 
 void SimulationControlsTest::engineStateTransitions()
@@ -137,6 +138,35 @@ void SimulationControlsTest::resetPreservesCircuitAndRestoresInitialValues()
 
     QTest::mouseDClick(&canvas, Qt::LeftButton, Qt::NoModifier, componentPosition);
     QVERIFY(actionSpy.constLast().constFirst().toString().contains("set to 1"));
+}
+
+void SimulationControlsTest::projectDataRoundTripPreservesComponents()
+{
+    CircuitCanvas source;
+    source.resize(500, 400);
+    source.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&source));
+
+    const QPoint componentPosition(240, 200);
+    source.setActiveComponentType("VoltageSource");
+    QTest::mouseClick(&source, Qt::LeftButton, Qt::NoModifier, componentPosition);
+    QTest::mouseDClick(&source, Qt::LeftButton, Qt::NoModifier, componentPosition);
+
+    const ProjectFileData saved = source.projectData("Round trip", QSize(800, 600));
+    QCOMPARE(saved.projectName, QString("Round trip"));
+    QCOMPARE(saved.canvasSize, QSize(800, 600));
+    QCOMPARE(saved.components.size(), 1);
+    QVERIFY(saved.components.constFirst().stateOn);
+
+    CircuitCanvas restored;
+    QString errorMessage;
+    QVERIFY2(restored.loadProjectData(saved, &errorMessage), qPrintable(errorMessage));
+    const ProjectFileData loaded = restored.projectData("Round trip", QSize(800, 600));
+    QCOMPARE(loaded.components.size(), 1);
+    QCOMPARE(loaded.components.constFirst().id, saved.components.constFirst().id);
+    QCOMPARE(loaded.components.constFirst().type, saved.components.constFirst().type);
+    QCOMPARE(loaded.components.constFirst().position, saved.components.constFirst().position);
+    QCOMPARE(loaded.components.constFirst().stateOn, saved.components.constFirst().stateOn);
 }
 
 QTEST_MAIN(SimulationControlsTest)

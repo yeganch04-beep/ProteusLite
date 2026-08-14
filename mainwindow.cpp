@@ -2,17 +2,21 @@
 #include "componentlistwidget.h"
 #include "mainwindow.h"
 #include "newprojectdialog.h"
+#include "projectfile.h"
 #include "startpage.h"
 #include "ui_mainwindow.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -160,7 +164,7 @@ void MainWindow::createStartPage()
     connect(startPage, &StartPage::newProjectRequested,
             this, &MainWindow::createNewProject);
     connect(startPage, &StartPage::openProjectRequested,
-            this, &MainWindow::openProjectPlaceholder);
+            this, &MainWindow::openProject);
     connect(startPage, &StartPage::exitRequested,
             qApp, &QApplication::quit);
     connect(startPage, &StartPage::recentProjectSelected, this,
@@ -176,12 +180,16 @@ void MainWindow::createMenuActions()
 
     auto *newProjectAction = fileMenu->addAction("New Project");
     auto *openProjectAction = fileMenu->addAction("Open Project");
+    auto *saveProjectAction = fileMenu->addAction("Save Project");
+    auto *saveProjectAsAction = fileMenu->addAction("Save Project As...");
     auto *backToStartAction = fileMenu->addAction("Back to Start Page");
     fileMenu->addSeparator();
     auto *exitAction = fileMenu->addAction("Exit");
 
     connect(newProjectAction, &QAction::triggered, this, &MainWindow::createNewProject);
-    connect(openProjectAction, &QAction::triggered, this, &MainWindow::openProjectPlaceholder);
+    connect(openProjectAction, &QAction::triggered, this, &MainWindow::openProject);
+    connect(saveProjectAction, &QAction::triggered, this, &MainWindow::saveProject);
+    connect(saveProjectAsAction, &QAction::triggered, this, &MainWindow::saveProjectAs);
     connect(backToStartAction, &QAction::triggered, this, &MainWindow::showStartPage);
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
 }
@@ -194,17 +202,98 @@ void MainWindow::createNewProject()
         return;
     }
 
+    currentProjectFilePath.clear();
     showEditorPage(dialog.projectName(), dialog.canvasWidth(), dialog.canvasHeight());
 }
 
-void MainWindow::openProjectPlaceholder()
+void MainWindow::openProject()
 {
-    QMessageBox::information(this, "Open Project",
-                             "Open Project will be implemented later.");
+    const QString fileName = QFileDialog::getOpenFileName(
+        this, "Open ProteusLite Project", QString(),
+        "ProteusLite projects (*.json);;All files (*.*)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    ProjectFileData project;
+    QString errorMessage;
+    if (!ProjectFile::load(fileName, &project, &errorMessage)) {
+        QMessageBox::critical(this, "Open Project", errorMessage);
+        return;
+    }
+    if (!circuitCanvas->loadProjectData(project, &errorMessage)) {
+        QMessageBox::critical(this, "Open Project", errorMessage);
+        return;
+    }
+
+    showEditorPage(project.projectName,
+                   project.canvasSize.width(),
+                   project.canvasSize.height());
+    currentProjectFilePath = fileName;
+    if (projectLogLabel != nullptr) {
+        projectLogLabel->setText(QString("Project opened: %1").arg(fileName));
+    }
+}
+
+void MainWindow::saveProject()
+{
+    if (pageStack->currentWidget() != editorPage) {
+        QMessageBox::information(this, "Save Project", "Create or open a project first.");
+        return;
+    }
+    if (currentProjectFilePath.isEmpty()) {
+        saveProjectAs();
+        return;
+    }
+    writeProjectFile(currentProjectFilePath);
+}
+
+void MainWindow::saveProjectAs()
+{
+    if (pageStack->currentWidget() != editorPage) {
+        QMessageBox::information(this, "Save Project", "Create or open a project first.");
+        return;
+    }
+
+    QString suggestedName = currentProjectName.trimmed();
+    if (suggestedName.isEmpty()) {
+        suggestedName = "Untitled Project";
+    }
+    suggestedName.replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this, "Save ProteusLite Project", suggestedName + ".json",
+        "ProteusLite projects (*.json);;All files (*.*)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+    if (QFileInfo(fileName).suffix().isEmpty()) {
+        fileName += ".json";
+    }
+    if (writeProjectFile(fileName)) {
+        currentProjectFilePath = fileName;
+    }
+}
+
+bool MainWindow::writeProjectFile(const QString &fileName)
+{
+    const ProjectFileData project = circuitCanvas->projectData(
+        currentProjectName, QSize(currentCanvasWidth, currentCanvasHeight));
+    QString errorMessage;
+    if (!ProjectFile::save(fileName, project, &errorMessage)) {
+        QMessageBox::critical(this, "Save Project", errorMessage);
+        return false;
+    }
+    currentProjectFilePath = fileName;
+    if (projectLogLabel != nullptr) {
+        projectLogLabel->setText(QString("Project saved: %1").arg(fileName));
+    }
+    return true;
 }
 
 void MainWindow::showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight)
 {
+    currentProjectName = projectName;
     currentCanvasWidth = canvasWidth;
     currentCanvasHeight = canvasHeight;
 
