@@ -1,6 +1,10 @@
 #include "circuitcanvas.h"
 
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -30,6 +34,7 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , selectedWireIndex(-1)
 {
     setMouseTracking(true);
+    setAcceptDrops(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(400, 300);
 
@@ -44,6 +49,54 @@ CircuitCanvas::~CircuitCanvas()
     simulationTimer->stop();
 }
 
+void CircuitCanvas::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event == nullptr || event->mimeData() == nullptr) {
+        return;
+    }
+
+    const QString typeName = event->mimeData()->text().trimmed();
+    if (createPinsForComponent(typeName).isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    event->acceptProposedAction();
+}
+
+void CircuitCanvas::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (event == nullptr || event->mimeData() == nullptr) {
+        return;
+    }
+
+    const QString typeName = event->mimeData()->text().trimmed();
+    if (createPinsForComponent(typeName).isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    event->acceptProposedAction();
+}
+
+void CircuitCanvas::dropEvent(QDropEvent *event)
+{
+    if (event == nullptr || event->mimeData() == nullptr) {
+        return;
+    }
+
+    const QString typeName = event->mimeData()->text().trimmed();
+    const QPoint worldPoint = screenToWorld(event->position().toPoint()).toPoint();
+
+    if (!placeComponent(typeName, worldPoint)) {
+        event->ignore();
+        return;
+    }
+
+    activeComponentType = typeName;
+    event->acceptProposedAction();
+}
+
 QPoint CircuitCanvas::snapToGrid(const QPoint &point) const
 {
     const int snappedX = static_cast<int>(std::round(point.x() / static_cast<double>(GridSpacing))) * GridSpacing;
@@ -56,6 +109,36 @@ void CircuitCanvas::setActiveComponentType(const QString &typeName)
 {
     activeComponentType = typeName;
     emit actionOccurred(QString("Selected component: %1").arg(componentDisplayName(typeName)));
+}
+
+bool CircuitCanvas::placeComponent(const QString &typeName, const QPoint &worldPosition)
+{
+    const QString normalizedTypeName = typeName.trimmed();
+    const QVector<Pin> pins = createPinsForComponent(normalizedTypeName);
+    if (normalizedTypeName.isEmpty() || pins.isEmpty()) {
+        emit actionOccurred(QString("Placement failed: unsupported component type: %1")
+                                .arg(normalizedTypeName));
+        return false;
+    }
+
+    const QPoint snappedPosition = snapToGrid(worldPosition);
+    Component model(createComponentId(), normalizedTypeName, snappedPosition);
+    for (const Pin &pin : pins) {
+        model.addPin(pin);
+    }
+
+    placedComponents.append(
+        PlacedComponent(model, createComponentLabel(normalizedTypeName)));
+    selectedComponentIndex = placedComponents.size() - 1;
+    selectedWireIndex = -1;
+    evaluateCircuit();
+
+    emit actionOccurred(QString("Placed %1 at X: %2, Y: %3")
+                            .arg(componentDisplayName(normalizedTypeName))
+                            .arg(snappedPosition.x())
+                            .arg(snappedPosition.y()));
+    update();
+    return true;
 }
 
 CircuitCanvas::SimulationState CircuitCanvas::simulationState() const
@@ -419,8 +502,6 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
 
     if (event->button() == Qt::LeftButton) {
         const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
-        const QPoint snappedPoint = snapToGrid(worldPoint);
-
         if (isWiringMode) {
             selectedComponentIndex = -1;
             selectedWireIndex = -1;
@@ -534,21 +615,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
         }
 
         if (!activeComponentType.isEmpty()) {
-            const QPoint position = snapToGrid(worldPoint);
-            Component model(createComponentId(), activeComponentType, position);
-            const QVector<Pin> pins = createPinsForComponent(activeComponentType);
-            for (const Pin &pin : pins) {
-                model.addPin(pin);
-            }
-            PlacedComponent component(model, createComponentLabel(activeComponentType));
-            placedComponents.append(component);
-            selectedComponentIndex = placedComponents.size() - 1;
-            selectedWireIndex = -1;
-            emit actionOccurred(QString("Placed %1 at X: %2, Y: %3")
-                                    .arg(componentDisplayName(component.component.name()))
-                                    .arg(component.component.position().x())
-                                    .arg(component.component.position().y()));
-            update();
+            placeComponent(activeComponentType, worldPoint);
             event->accept();
             return;
         }
