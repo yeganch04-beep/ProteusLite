@@ -13,9 +13,15 @@
 #include <QVector>
 #include <QWidget>
 
-class QPainter;
 class QColor;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
+class QKeyEvent;
+class QMouseEvent;
+class QPainter;
 class QTimer;
+class QWheelEvent;
 
 class CircuitCanvas : public QWidget
 {
@@ -54,6 +60,9 @@ signals:
     void zoomChanged(int percentage);
 
 protected:
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -82,6 +91,7 @@ private:
         bool stateOn = false;
     };
 
+    bool placeComponent(const QString &typeName, const QPoint &worldPosition);
     QPointF screenToWorld(const QPoint &screenPoint) const;
     void emitMousePosition(const QPoint &screenPoint);
     int componentAt(const QPoint &worldPoint) const;
