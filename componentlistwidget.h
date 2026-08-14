@@ -1,10 +1,19 @@
 #ifndef COMPONENTLISTWIDGET_H
 #define COMPONENTLISTWIDGET_H
 
-#include <QListWidget>
-#include <QPoint>
+#include <QString>
+#include <QWidget>
 
-class ComponentListWidget : public QListWidget
+class ComponentPreviewWidget;
+class QLabel;
+class QLineEdit;
+class QListWidget;
+class QListWidgetItem;
+class QPushButton;
+class QTreeWidget;
+class QTreeWidgetItem;
+
+class ComponentListWidget : public QWidget
 {
     Q_OBJECT
 
@@ -14,14 +23,23 @@ public:
 signals:
     void componentTypeSelected(const QString &typeName);
 
-protected:
-    void mousePressEvent(QMouseEvent *event) override;
-    void mouseMoveEvent(QMouseEvent *event) override;
-
 private:
-    void addComponentItem(const QString &label, const QString &typeName);
+    void addLibraryItem(const QString &category,
+                        const QString &label,
+                        const QString &typeName);
+    void applyFilter(const QString &filterText);
+    void updatePreview(QTreeWidgetItem *item);
+    void addToActiveList(QTreeWidgetItem *item);
+    void removeSelectedActiveItem();
+    void activateItem(QListWidgetItem *item);
 
-    QPoint m_dragStartPos;
+    QLineEdit *searchEdit;
+    QTreeWidget *libraryTree;
+    ComponentPreviewWidget *previewWidget;
+    QLabel *searchStatusLabel;
+    QListWidget *activeList;
+    QPushButton *addButton;
+    QPushButton *removeButton;
 };
 
-#endif
+#endif // COMPONENTLISTWIDGET_H
