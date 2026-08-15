@@ -2,9 +2,12 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QString>
 
 class QLabel;
+class QPushButton;
 class QStackedWidget;
+class CircuitCanvas;
 class StartPage;
 
 QT_BEGIN_NAMESPACE
@@ -25,16 +28,29 @@ private:
     void createStartPage();
     void createMenuActions();
     void createNewProject();
-    void openProjectPlaceholder();
+    void openProject();
+    void saveProject();
+    void saveProjectAs();
+    bool writeProjectFile(const QString &fileName);
     void showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight);
     void showStartPage();
+    void updateSimulationControls();
 
     Ui::MainWindow *ui;
     QStackedWidget *pageStack;
     StartPage *startPage;
     QWidget *editorPage;
+    CircuitCanvas *circuitCanvas;
+    QPushButton *runButton;
+    QPushButton *pauseButton;
+    QPushButton *stopButton;
+    QPushButton *resetButton;
+    QLabel *simulationStatusLabel;
     QLabel *projectLogLabel;
+    QString currentProjectName;
+    QString currentProjectFilePath;
     int currentCanvasWidth;
     int currentCanvasHeight;
 };
+
 #endif // MAINWINDOW_H

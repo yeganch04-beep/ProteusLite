@@ -1,16 +1,22 @@
 #include "circuitcanvas.h"
+#include "componentlistwidget.h"
 #include "mainwindow.h"
 #include "newprojectdialog.h"
+#include "projectfile.h"
 #include "startpage.h"
 #include "ui_mainwindow.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -20,6 +26,12 @@ MainWindow::MainWindow(QWidget *parent)
     , pageStack(new QStackedWidget(this))
     , startPage(nullptr)
     , editorPage(nullptr)
+    , circuitCanvas(nullptr)
+    , runButton(nullptr)
+    , pauseButton(nullptr)
+    , stopButton(nullptr)
+    , resetButton(nullptr)
+    , simulationStatusLabel(nullptr)
     , projectLogLabel(nullptr)
     , currentCanvasWidth(0)
     , currentCanvasHeight(0)
@@ -33,12 +45,38 @@ MainWindow::MainWindow(QWidget *parent)
 
     editorPage = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(editorPage);
+
+    auto *simulationGroupBox = new QGroupBox("Simulation", editorPage);
+    auto *simulationLayout = new QHBoxLayout(simulationGroupBox);
+    runButton = new QPushButton("Run", simulationGroupBox);
+    pauseButton = new QPushButton("Pause", simulationGroupBox);
+    stopButton = new QPushButton("Stop", simulationGroupBox);
+    resetButton = new QPushButton("Reset", simulationGroupBox);
+    simulationStatusLabel = new QLabel(simulationGroupBox);
+
+    runButton->setObjectName("simulationRunButton");
+    pauseButton->setObjectName("simulationPauseButton");
+    stopButton->setObjectName("simulationStopButton");
+    resetButton->setObjectName("simulationResetButton");
+    simulationStatusLabel->setObjectName("simulationStatusLabel");
+    simulationStatusLabel->setAlignment(Qt::AlignCenter);
+    simulationStatusLabel->setMinimumWidth(130);
+
+    simulationLayout->addWidget(runButton);
+    simulationLayout->addWidget(pauseButton);
+    simulationLayout->addWidget(stopButton);
+    simulationLayout->addWidget(resetButton);
+    simulationLayout->addStretch();
+    simulationLayout->addWidget(simulationStatusLabel);
+
     auto *workspaceLayout = new QHBoxLayout();
 
     auto *componentsGroupBox = new QGroupBox("Components", editorPage);
     componentsGroupBox->setMinimumWidth(180);
     componentsGroupBox->setMaximumWidth(240);
-    componentsGroupBox->setLayout(new QVBoxLayout());
+    auto *componentsLayout = new QVBoxLayout(componentsGroupBox);
+    auto *componentList = new ComponentListWidget(componentsGroupBox);
+    componentsLayout->addWidget(componentList);
 
     auto *canvasGroupBox = new QGroupBox("Circuit Canvas", editorPage);
     auto *canvasLayout = new QVBoxLayout(canvasGroupBox);
@@ -51,6 +89,7 @@ MainWindow::MainWindow(QWidget *parent)
     logGroupBox->setMaximumHeight(160);
     auto *logLayout = new QVBoxLayout(logGroupBox);
 
+    mainLayout->addWidget(simulationGroupBox);
     mainLayout->addLayout(workspaceLayout);
     mainLayout->addWidget(logGroupBox);
 
@@ -58,8 +97,8 @@ MainWindow::MainWindow(QWidget *parent)
     pageStack->addWidget(editorPage);
     setCentralWidget(pageStack);
 
-    auto *canvas = new CircuitCanvas(this);
-    canvasLayout->addWidget(canvas);
+    circuitCanvas = new CircuitCanvas(this);
+    canvasLayout->addWidget(circuitCanvas);
 
     projectLogLabel = new QLabel("No project created yet.", this);
     logLayout->addWidget(projectLogLabel);
@@ -70,16 +109,41 @@ MainWindow::MainWindow(QWidget *parent)
     auto *zoomLabel = new QLabel("Zoom: 100%", this);
     logLayout->addWidget(zoomLabel);
 
-    connect(canvas, &CircuitCanvas::mousePositionChanged, this,
+    connect(circuitCanvas, &CircuitCanvas::mousePositionChanged, this,
             [coordinatesLabel](const QPoint &position) {
                 coordinatesLabel->setText(
                     QString("X: %1, Y: %2").arg(position.x()).arg(position.y()));
             });
 
-    connect(canvas, &CircuitCanvas::zoomChanged, this,
+    connect(circuitCanvas, &CircuitCanvas::zoomChanged, this,
             [zoomLabel](int percentage) {
                 zoomLabel->setText(QString("Zoom: %1%").arg(percentage));
             });
+
+    connect(componentList, &ComponentListWidget::componentTypeSelected,
+            circuitCanvas, &CircuitCanvas::setActiveComponentType);
+
+    connect(circuitCanvas, &CircuitCanvas::actionOccurred, this,
+            [this](const QString &message) {
+                if (projectLogLabel != nullptr) {
+                    projectLogLabel->setText(message);
+                }
+            });
+
+    connect(runButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::runSimulation);
+    connect(pauseButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::pauseSimulation);
+    connect(stopButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::stopSimulation);
+    connect(resetButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::resetSimulation);
+    connect(circuitCanvas, &CircuitCanvas::simulationStateChanged, this,
+            [this](CircuitCanvas::SimulationState) {
+                updateSimulationControls();
+            });
+
+    updateSimulationControls();
 
     createMenuActions();
     showStartPage();
@@ -87,6 +151,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    if (circuitCanvas != nullptr) {
+        circuitCanvas->stopSimulation();
+    }
     delete ui;
 }
 
@@ -97,7 +164,7 @@ void MainWindow::createStartPage()
     connect(startPage, &StartPage::newProjectRequested,
             this, &MainWindow::createNewProject);
     connect(startPage, &StartPage::openProjectRequested,
-            this, &MainWindow::openProjectPlaceholder);
+            this, &MainWindow::openProject);
     connect(startPage, &StartPage::exitRequested,
             qApp, &QApplication::quit);
     connect(startPage, &StartPage::recentProjectSelected, this,
@@ -113,12 +180,16 @@ void MainWindow::createMenuActions()
 
     auto *newProjectAction = fileMenu->addAction("New Project");
     auto *openProjectAction = fileMenu->addAction("Open Project");
+    auto *saveProjectAction = fileMenu->addAction("Save Project");
+    auto *saveProjectAsAction = fileMenu->addAction("Save Project As...");
     auto *backToStartAction = fileMenu->addAction("Back to Start Page");
     fileMenu->addSeparator();
     auto *exitAction = fileMenu->addAction("Exit");
 
     connect(newProjectAction, &QAction::triggered, this, &MainWindow::createNewProject);
-    connect(openProjectAction, &QAction::triggered, this, &MainWindow::openProjectPlaceholder);
+    connect(openProjectAction, &QAction::triggered, this, &MainWindow::openProject);
+    connect(saveProjectAction, &QAction::triggered, this, &MainWindow::saveProject);
+    connect(saveProjectAsAction, &QAction::triggered, this, &MainWindow::saveProjectAs);
     connect(backToStartAction, &QAction::triggered, this, &MainWindow::showStartPage);
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
 }
@@ -131,17 +202,98 @@ void MainWindow::createNewProject()
         return;
     }
 
+    currentProjectFilePath.clear();
     showEditorPage(dialog.projectName(), dialog.canvasWidth(), dialog.canvasHeight());
 }
 
-void MainWindow::openProjectPlaceholder()
+void MainWindow::openProject()
 {
-    QMessageBox::information(this, "Open Project",
-                             "Open Project will be implemented later.");
+    const QString fileName = QFileDialog::getOpenFileName(
+        this, "Open ProteusLite Project", QString(),
+        "ProteusLite projects (*.json);;All files (*.*)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    ProjectFileData project;
+    QString errorMessage;
+    if (!ProjectFile::load(fileName, &project, &errorMessage)) {
+        QMessageBox::critical(this, "Open Project", errorMessage);
+        return;
+    }
+    if (!circuitCanvas->loadProjectData(project, &errorMessage)) {
+        QMessageBox::critical(this, "Open Project", errorMessage);
+        return;
+    }
+
+    showEditorPage(project.projectName,
+                   project.canvasSize.width(),
+                   project.canvasSize.height());
+    currentProjectFilePath = fileName;
+    if (projectLogLabel != nullptr) {
+        projectLogLabel->setText(QString("Project opened: %1").arg(fileName));
+    }
+}
+
+void MainWindow::saveProject()
+{
+    if (pageStack->currentWidget() != editorPage) {
+        QMessageBox::information(this, "Save Project", "Create or open a project first.");
+        return;
+    }
+    if (currentProjectFilePath.isEmpty()) {
+        saveProjectAs();
+        return;
+    }
+    writeProjectFile(currentProjectFilePath);
+}
+
+void MainWindow::saveProjectAs()
+{
+    if (pageStack->currentWidget() != editorPage) {
+        QMessageBox::information(this, "Save Project", "Create or open a project first.");
+        return;
+    }
+
+    QString suggestedName = currentProjectName.trimmed();
+    if (suggestedName.isEmpty()) {
+        suggestedName = "Untitled Project";
+    }
+    suggestedName.replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this, "Save ProteusLite Project", suggestedName + ".json",
+        "ProteusLite projects (*.json);;All files (*.*)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+    if (QFileInfo(fileName).suffix().isEmpty()) {
+        fileName += ".json";
+    }
+    if (writeProjectFile(fileName)) {
+        currentProjectFilePath = fileName;
+    }
+}
+
+bool MainWindow::writeProjectFile(const QString &fileName)
+{
+    const ProjectFileData project = circuitCanvas->projectData(
+        currentProjectName, QSize(currentCanvasWidth, currentCanvasHeight));
+    QString errorMessage;
+    if (!ProjectFile::save(fileName, project, &errorMessage)) {
+        QMessageBox::critical(this, "Save Project", errorMessage);
+        return false;
+    }
+    currentProjectFilePath = fileName;
+    if (projectLogLabel != nullptr) {
+        projectLogLabel->setText(QString("Project saved: %1").arg(fileName));
+    }
+    return true;
 }
 
 void MainWindow::showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight)
 {
+    currentProjectName = projectName;
     currentCanvasWidth = canvasWidth;
     currentCanvasHeight = canvasHeight;
 
@@ -159,6 +311,45 @@ void MainWindow::showEditorPage(const QString &projectName, int canvasWidth, int
 
 void MainWindow::showStartPage()
 {
+    if (circuitCanvas != nullptr) {
+        circuitCanvas->stopSimulation();
+    }
     setWindowTitle("ProteusLite");
     pageStack->setCurrentWidget(startPage);
+}
+
+void MainWindow::updateSimulationControls()
+{
+    if (circuitCanvas == nullptr) {
+        return;
+    }
+
+    const CircuitCanvas::SimulationState state = circuitCanvas->simulationState();
+    const bool isStopped = state == CircuitCanvas::SimulationState::Stopped;
+    const bool isRunning = state == CircuitCanvas::SimulationState::Running;
+    const bool isPaused = state == CircuitCanvas::SimulationState::Paused;
+
+    runButton->setEnabled(!isRunning);
+    runButton->setText("Run");
+    runButton->setToolTip(isPaused ? "Resume simulation" : "Start simulation");
+    pauseButton->setEnabled(isRunning);
+    stopButton->setEnabled(!isStopped);
+    resetButton->setEnabled(true);
+
+    if (isRunning) {
+        simulationStatusLabel->setText("Running");
+        simulationStatusLabel->setStyleSheet(
+            "QLabel { color: #145a32; background: #d5f5e3; border: 1px solid #58d68d; "
+            "border-radius: 4px; padding: 4px 10px; font-weight: bold; }");
+    } else if (isPaused) {
+        simulationStatusLabel->setText("Paused");
+        simulationStatusLabel->setStyleSheet(
+            "QLabel { color: #7d6608; background: #fcf3cf; border: 1px solid #f4d03f; "
+            "border-radius: 4px; padding: 4px 10px; font-weight: bold; }");
+    } else {
+        simulationStatusLabel->setText("Stopped");
+        simulationStatusLabel->setStyleSheet(
+            "QLabel { color: #424949; background: #e5e7e9; border: 1px solid #aab7b8; "
+            "border-radius: 4px; padding: 4px 10px; font-weight: bold; }");
+    }
 }

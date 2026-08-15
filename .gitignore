@@ -30,3 +30,33 @@
 *.exe
 *.out
 *.app
+
+# Qt / CMake build outputs
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Qt Creator / user-specific files
+*.user
+*.user.*
+*.autosave
+.qtcreator/
+.qtc_clangd/
+
+# Qt generated files
+moc_*
+ui_*
+qrc_*
+
+# Binaries / temporary build files
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.o
