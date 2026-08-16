@@ -7,6 +7,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFile>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -30,6 +31,10 @@ private slots:
     void recentProjectsUseRealFilePaths();
     void resetPreservesCircuitAndRestoresInitialValues();
     void projectDataRoundTripPreservesComponents();
+    void floatingInputsAreReported();
+    void batteryDrivesLedHigh();
+    void nandAndXorTruthTables();
+    void mirroringPersistsAndCanvasExportsToPng();
 };
 
 void SimulationControlsTest::engineStateTransitions()
@@ -334,6 +339,137 @@ void SimulationControlsTest::projectDataRoundTripPreservesComponents()
     QCOMPARE(loaded.components.constFirst().type, saved.components.constFirst().type);
     QCOMPARE(loaded.components.constFirst().position, saved.components.constFirst().position);
     QCOMPARE(loaded.components.constFirst().stateOn, saved.components.constFirst().stateOn);
+}
+
+void SimulationControlsTest::floatingInputsAreReported()
+{
+    CircuitCanvas canvas;
+    canvas.resize(500, 400);
+    canvas.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&canvas));
+
+    canvas.setActiveComponentType("AndGate");
+    QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(240, 200));
+
+    QSignalSpy actionSpy(&canvas, &CircuitCanvas::actionOccurred);
+    canvas.stepSimulation();
+    QCOMPARE(actionSpy.count(), 1);
+    const QString message = actionSpy.constFirst().constFirst().toString();
+    QVERIFY(message.contains("Floating input(s)"));
+    QVERIFY(message.contains("AND1.A"));
+    QVERIFY(message.contains("AND1.B"));
+}
+
+void SimulationControlsTest::batteryDrivesLedHigh()
+{
+    CircuitCanvas canvas;
+    canvas.resize(620, 400);
+    canvas.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&canvas));
+
+    canvas.setActiveComponentType("Battery");
+    QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(160, 200));
+    canvas.setActiveComponentType("Led");
+    QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(420, 200));
+
+    QTest::keyClick(&canvas, Qt::Key_W);
+    QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(218, 200));
+    QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(362, 200));
+    QTest::keyClick(&canvas, Qt::Key_W);
+    canvas.stepSimulation();
+
+    const ProjectFileData project = canvas.projectData("Battery", QSize(800, 600));
+    QCOMPARE(project.components.size(), 2);
+    QCOMPARE(project.components[0].type, QString("Battery"));
+    QCOMPARE(project.components[1].type, QString("Led"));
+    QVERIFY(project.components[1].stateOn);
+}
+
+void SimulationControlsTest::nandAndXorTruthTables()
+{
+    auto buildTwoInputCircuit = [](CircuitCanvas *canvas, const QString &gateType) {
+        canvas->resize(720, 460);
+        canvas->show();
+        QVERIFY(QTest::qWaitForWindowExposed(canvas));
+
+        canvas->setActiveComponentType("VoltageSource");
+        QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 160));
+        QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 280));
+        canvas->setActiveComponentType(gateType);
+        QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, QPoint(360, 220));
+        canvas->setActiveComponentType("Led");
+        QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, QPoint(580, 220));
+
+        const QList<QPair<QPoint, QPoint>> connections{
+            {QPoint(198, 160), QPoint(302, 204)},
+            {QPoint(198, 280), QPoint(302, 236)},
+            {QPoint(418, 220), QPoint(522, 220)}
+        };
+        for (const auto &connection : connections) {
+            QTest::keyClick(canvas, Qt::Key_W);
+            QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, connection.first);
+            QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, connection.second);
+            QTest::keyClick(canvas, Qt::Key_W);
+        }
+    };
+
+    CircuitCanvas nandCanvas;
+    buildTwoInputCircuit(&nandCanvas, "NandGate");
+    QTest::mouseDClick(&nandCanvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 160));
+    QTest::mouseDClick(&nandCanvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 280));
+    nandCanvas.stepSimulation();
+    ProjectFileData nandResult = nandCanvas.projectData("NAND", QSize(800, 600));
+    QVERIFY(!nandResult.components.constLast().stateOn);
+    QTest::mouseDClick(&nandCanvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 280));
+    nandCanvas.stepSimulation();
+    nandResult = nandCanvas.projectData("NAND", QSize(800, 600));
+    QVERIFY(nandResult.components.constLast().stateOn);
+
+    CircuitCanvas xorCanvas;
+    buildTwoInputCircuit(&xorCanvas, "XorGate");
+    QTest::mouseDClick(&xorCanvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 160));
+    xorCanvas.stepSimulation();
+    ProjectFileData xorResult = xorCanvas.projectData("XOR", QSize(800, 600));
+    QVERIFY(xorResult.components.constLast().stateOn);
+    QTest::mouseDClick(&xorCanvas, Qt::LeftButton, Qt::NoModifier, QPoint(140, 280));
+    xorCanvas.stepSimulation();
+    xorResult = xorCanvas.projectData("XOR", QSize(800, 600));
+    QVERIFY(!xorResult.components.constLast().stateOn);
+}
+
+void SimulationControlsTest::mirroringPersistsAndCanvasExportsToPng()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    CircuitCanvas canvas;
+    canvas.resize(500, 400);
+    canvas.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&canvas));
+    canvas.setDocumentCanvasSize(QSize(500, 400));
+    canvas.setActiveComponentType("Resistor");
+    QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(240, 200));
+    QTest::keyClick(&canvas, Qt::Key_M);
+    QTest::keyClick(&canvas, Qt::Key_M, Qt::ShiftModifier);
+
+    const ProjectFileData saved = canvas.projectData("Mirrored", QSize(800, 600));
+    QCOMPARE(saved.components.size(), 1);
+    QVERIFY(saved.components.constFirst().mirrored);
+    QVERIFY(saved.components.constFirst().mirroredVertically);
+
+    CircuitCanvas restored;
+    QString errorMessage;
+    QVERIFY2(restored.loadProjectData(saved, &errorMessage), qPrintable(errorMessage));
+    const ProjectFileData loaded = restored.projectData("Mirrored", QSize(800, 600));
+    QVERIFY(loaded.components.constFirst().mirrored);
+    QVERIFY(loaded.components.constFirst().mirroredVertically);
+
+    const QString imagePath = directory.filePath("canvas.png");
+    QVERIFY2(canvas.exportToPng(imagePath, &errorMessage), qPrintable(errorMessage));
+    QVERIFY(QFile::exists(imagePath));
+    const QImage image(imagePath);
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.size(), canvas.size());
 }
 
 QTEST_MAIN(SimulationControlsTest)

@@ -162,6 +162,13 @@ protected:
             painter.drawLine(24, 0, 58, 0);
             painter.drawText(QRectF(-17, -9, 12, 18), Qt::AlignCenter, "-");
             painter.drawText(QRectF(5, -9, 12, 18), Qt::AlignCenter, "+");
+        } else if (m_typeName == "Battery") {
+            painter.drawLine(-58, 0, -22, 0);
+            painter.drawLine(-22, -22, -22, 22);
+            painter.drawLine(2, -13, 2, 13);
+            painter.drawLine(2, 0, 58, 0);
+            painter.drawText(QRectF(-45, -31, 18, 18), Qt::AlignCenter, "+");
+            painter.drawText(QRectF(9, -27, 18, 18), Qt::AlignCenter, "-");
         } else if (m_typeName == "AndGate") {
             painter.drawLine(-58, -13, -25, -13);
             painter.drawLine(-58, 13, -25, 13);
@@ -191,6 +198,33 @@ protected:
             triangle << QPointF(-25, -24) << QPointF(-25, 24) << QPointF(20, 0);
             painter.drawPolygon(triangle);
             painter.drawEllipse(QPointF(26, 0), 5, 5);
+        } else if (m_typeName == "NandGate") {
+            painter.drawLine(-58, -13, -25, -13);
+            painter.drawLine(-58, 13, -25, 13);
+            painter.drawLine(31, 0, 58, 0);
+            QPainterPath path;
+            path.moveTo(-25, -27);
+            path.lineTo(0, -27);
+            path.arcTo(QRectF(-27, -27, 54, 54), 90, -180);
+            path.lineTo(-25, 27);
+            path.closeSubpath();
+            painter.drawPath(path);
+            painter.drawEllipse(QPointF(28, 0), 4, 4);
+        } else if (m_typeName == "XorGate") {
+            painter.drawLine(-58, -13, -29, -13);
+            painter.drawLine(-58, 13, -29, 13);
+            painter.drawLine(27, 0, 58, 0);
+            QPainterPath path;
+            path.moveTo(-33, -27);
+            path.quadTo(-12, 0, -33, 27);
+            path.quadTo(3, 24, 28, 0);
+            path.quadTo(3, -24, -33, -27);
+            path.closeSubpath();
+            painter.drawPath(path);
+            QPainterPath exclusiveCurve;
+            exclusiveCurve.moveTo(-41, -27);
+            exclusiveCurve.quadTo(-20, 0, -41, 27);
+            painter.drawPath(exclusiveCurve);
         }
 
         painter.restore();
@@ -279,9 +313,12 @@ ComponentListWidget::ComponentListWidget(QWidget *parent)
     addLibraryItem("Interactive & Output", "Switch", "Switch");
     addLibraryItem("Sources", "Ground", "Ground");
     addLibraryItem("Sources", "Digital Voltage Source", "VoltageSource");
+    addLibraryItem("Sources", "Digital Battery", "Battery");
     addLibraryItem("Digital Logic", "AND Gate", "AndGate");
     addLibraryItem("Digital Logic", "OR Gate", "OrGate");
     addLibraryItem("Digital Logic", "NOT Gate", "NotGate");
+    addLibraryItem("Digital Logic", "NAND Gate", "NandGate");
+    addLibraryItem("Digital Logic", "XOR Gate", "XorGate");
     libraryTree->expandAll();
 
     connect(searchEdit, &QLineEdit::textChanged,
