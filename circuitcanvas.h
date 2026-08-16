@@ -48,6 +48,8 @@ public:
                                 const QSize &canvasSize) const;
     bool loadProjectData(const ProjectFileData &project,
                          QString *errorMessage = nullptr);
+    bool exportToPng(const QString &fileName,
+                     QString *errorMessage = nullptr);
 
 public slots:
     void runSimulation();
@@ -98,6 +100,8 @@ private:
         QString label;
         QString value;
         int rotationDegrees = 0;
+        bool mirrored = false;
+        bool mirroredVertically = false;
         bool stateOn = false;
     };
 
@@ -158,9 +162,12 @@ private:
     void drawSwitch(QPainter &painter, bool closed) const;
     void drawGround(QPainter &painter) const;
     void drawVoltageSource(QPainter &painter, int value) const;
+    void drawBattery(QPainter &painter) const;
     void drawAndGate(QPainter &painter) const;
     void drawOrGate(QPainter &painter) const;
     void drawNotGate(QPainter &painter) const;
+    void drawNandGate(QPainter &painter) const;
+    void drawXorGate(QPainter &painter) const;
     void resetView();
     void setZoom(double newZoom, const QPoint &anchorPoint);
 
@@ -186,6 +193,7 @@ private:
     QHash<QString, int> labelCounters;
     QTimer *simulationTimer;
     SimulationState currentSimulationState;
+    QString lastSimulationStatus;
     quint64 nextComponentId;
     quint64 nextWireId;
     int selectedComponentIndex;

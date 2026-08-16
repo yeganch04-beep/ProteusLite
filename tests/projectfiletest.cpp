@@ -30,6 +30,8 @@ void ProjectFileTest::roundTripPreservesProjectData()
     input.value = "5 V";
     input.position = QPoint(100, 200);
     input.rotationDegrees = 90;
+    input.mirrored = true;
+    input.mirroredVertically = true;
     input.stateOn = true;
     source.components.append(input);
 
@@ -64,6 +66,8 @@ void ProjectFileTest::roundTripPreservesProjectData()
     QCOMPARE(loaded.components[0].value, input.value);
     QCOMPARE(loaded.components[0].position, input.position);
     QCOMPARE(loaded.components[0].rotationDegrees, input.rotationDegrees);
+    QCOMPARE(loaded.components[0].mirrored, input.mirrored);
+    QCOMPARE(loaded.components[0].mirroredVertically, input.mirroredVertically);
     QCOMPARE(loaded.components[0].stateOn, input.stateOn);
     QCOMPARE(loaded.wires[0].startComponentId, wire.startComponentId);
     QCOMPARE(loaded.wires[0].endComponentId, wire.endComponentId);

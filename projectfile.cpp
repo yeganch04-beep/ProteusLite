@@ -74,6 +74,8 @@ bool ProjectFile::save(const QString &fileName,
             {"value", component.value},
             {"position", pointToJson(component.position)},
             {"rotationDegrees", component.rotationDegrees},
+            {"mirrored", component.mirrored},
+            {"mirroredVertically", component.mirroredVertically},
             {"stateOn", component.stateOn}
         });
     }
@@ -192,6 +194,8 @@ bool ProjectFile::load(const QString &fileName,
         }
         componentIds.insert(component.id);
         component.rotationDegrees = object.value("rotationDegrees").toInt();
+        component.mirrored = object.value("mirrored").toBool(false);
+        component.mirroredVertically = object.value("mirroredVertically").toBool(false);
         component.stateOn = object.value("stateOn").toBool(false);
         component.value = object.value("value").toString();
         loaded.components.append(component);

@@ -14,6 +14,8 @@ struct ProjectComponentData
     QString value;
     QPoint position;
     int rotationDegrees = 0;
+    bool mirrored = false;
+    bool mirroredVertically = false;
     bool stateOn = false;
 };
 

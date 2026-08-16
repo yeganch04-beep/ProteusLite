@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
@@ -206,6 +207,8 @@ ProjectFileData CircuitCanvas::projectData(const QString &projectName,
         component.value = placed.value;
         component.position = placed.component.position();
         component.rotationDegrees = placed.rotationDegrees;
+        component.mirrored = placed.mirrored;
+        component.mirroredVertically = placed.mirroredVertically;
         component.stateOn = placed.stateOn;
         project.components.append(component);
     }
@@ -282,6 +285,8 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
                                    ? defaultComponentValue(stored.type)
                                    : stored.value);
         placed.rotationDegrees = ((stored.rotationDegrees % 360) + 360) % 360;
+        placed.mirrored = stored.mirrored;
+        placed.mirroredVertically = stored.mirroredVertically;
         placed.stateOn = stored.stateOn;
         placedComponents.append(placed);
         componentIds.insert(stored.id);
@@ -338,6 +343,7 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
     nextComponentId = maximumComponentId + 1;
     nextWireId = maximumWireId + 1;
     resetSimulationRuntime();
+    lastSimulationStatus.clear();
     for (int index = 0; index < placedComponents.size(); ++index) {
         placedComponents[index].stateOn = project.components[index].stateOn;
     }
@@ -352,6 +358,69 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
     return true;
 }
 
+bool CircuitCanvas::exportToPng(const QString &fileName,
+                                QString *errorMessage)
+{
+    if (fileName.trimmed().isEmpty()) {
+        if (errorMessage != nullptr) {
+            *errorMessage = "A destination file name is required.";
+        }
+        return false;
+    }
+
+    if (!documentCanvasSize.isValid() || documentCanvasSize.isEmpty()) {
+        if (errorMessage != nullptr) {
+            *errorMessage = "The document canvas size is invalid.";
+        }
+        return false;
+    }
+
+    QPixmap image(documentCanvasSize);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPen gridPen(QColor(225, 225, 225));
+    painter.setPen(gridPen);
+    for (int x = 0; x <= documentCanvasSize.width(); x += GridSpacing) {
+        painter.drawLine(QPoint(x, 0), QPoint(x, documentCanvasSize.height()));
+    }
+    for (int y = 0; y <= documentCanvasSize.height(); y += GridSpacing) {
+        painter.drawLine(QPoint(0, y), QPoint(documentCanvasSize.width(), y));
+    }
+
+    for (const Wire &wire : placedWires) {
+        drawWire(painter, wire, false);
+    }
+    for (const PlacedComponent &component : placedComponents) {
+        painter.save();
+        painter.translate(component.component.position());
+        painter.rotate(component.rotationDegrees);
+        if (component.mirrored || component.mirroredVertically) {
+            painter.scale(component.mirrored ? -1.0 : 1.0,
+                          component.mirroredVertically ? -1.0 : 1.0);
+        }
+        drawComponent(painter, component);
+        drawComponentPins(painter, component);
+        painter.restore();
+        drawComponentLabel(painter, component);
+        drawComponentStateText(painter, component);
+    }
+    painter.end();
+
+    if (!image.save(fileName, "PNG")) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QString("Could not export the circuit canvas to: %1").arg(fileName);
+        }
+        return false;
+    }
+
+    if (errorMessage != nullptr) {
+        errorMessage->clear();
+    }
+    return true;
+}
+
 void CircuitCanvas::runSimulation()
 {
     if (currentSimulationState == SimulationState::Running) {
@@ -362,7 +431,11 @@ void CircuitCanvas::runSimulation()
     setSimulationState(SimulationState::Running);
     performSimulationStep();
     simulationTimer->start();
-    emit actionOccurred(resuming ? "Simulation resumed" : "Simulation started");
+    QString message = resuming ? "Simulation resumed" : "Simulation started";
+    if (!lastSimulationStatus.isEmpty()) {
+        message += " - " + lastSimulationStatus;
+    }
+    emit actionOccurred(message);
 }
 
 void CircuitCanvas::pauseSimulation()
@@ -391,6 +464,7 @@ void CircuitCanvas::resetSimulation()
 {
     simulationTimer->stop();
     resetSimulationRuntime();
+    lastSimulationStatus.clear();
     setSimulationState(SimulationState::Stopped);
     emit actionOccurred("Simulation reset");
     update();
@@ -405,7 +479,11 @@ void CircuitCanvas::stepSimulation()
 
     simulationTimer->stop();
     performSimulationStep();
-    emit actionOccurred("Simulation advanced by one step");
+    QString message = "Simulation advanced by one step";
+    if (!lastSimulationStatus.isEmpty()) {
+        message += " - " + lastSimulationStatus;
+    }
+    emit actionOccurred(message);
 }
 
 void CircuitCanvas::editSelectedComponentProperties()
@@ -620,6 +698,31 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
         PlacedComponent &component = placedComponents[selectedComponentIndex];
         component.rotationDegrees = (component.rotationDegrees + 90) % 360;
         emit actionOccurred(QString("Rotated component: %1").arg(componentDisplayName(component.component.name())));
+        update();
+        event->accept();
+        return;
+    }
+
+    if (event->key() == Qt::Key_M && selectedComponentIndex >= 0) {
+        PlacedComponent &component = placedComponents[selectedComponentIndex];
+        const bool verticalMirror = event->modifiers().testFlag(Qt::ShiftModifier);
+        if (verticalMirror) {
+            component.mirroredVertically = !component.mirroredVertically;
+        } else {
+            component.mirrored = !component.mirrored;
+        }
+        const QString simulationStatus = evaluateCircuit();
+        const bool mirrorEnabled = verticalMirror
+                                       ? component.mirroredVertically
+                                       : component.mirrored;
+        QString message = QString("Mirrored component %1: %2 (%3)")
+                              .arg(verticalMirror ? "vertically" : "horizontally")
+                              .arg(componentDisplayName(component.component.name()))
+                              .arg(mirrorEnabled ? "ON" : "OFF");
+        if (!simulationStatus.isEmpty()) {
+            message += " - " + simulationStatus;
+        }
+        emit actionOccurred(message);
         update();
         event->accept();
         return;
@@ -904,6 +1007,10 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
         painter.save();
         painter.translate(component.component.position());
         painter.rotate(component.rotationDegrees);
+        if (component.mirrored || component.mirroredVertically) {
+            painter.scale(component.mirrored ? -1.0 : 1.0,
+                          component.mirroredVertically ? -1.0 : 1.0);
+        }
         drawComponent(painter, component);
         drawComponentPins(painter, component);
         painter.restore();
@@ -1101,7 +1208,8 @@ QVector<Pin> CircuitCanvas::createPinsForComponent(const QString &typeName) cons
         return pin;
     };
 
-    if (typeName == "AndGate" || typeName == "OrGate") {
+    if (typeName == "AndGate" || typeName == "OrGate"
+        || typeName == "NandGate" || typeName == "XorGate") {
         return {
             Pin("A", PinType::Input, QPoint(-58, -16)),
             Pin("B", PinType::Input, QPoint(-58, 16)),
@@ -1116,6 +1224,9 @@ QVector<Pin> CircuitCanvas::createPinsForComponent(const QString &typeName) cons
     }
     if (typeName == "VoltageSource") {
         return {pinWithState("OUT", PinType::Output, QPoint(58, 0), LogicState::Low)};
+    }
+    if (typeName == "Battery") {
+        return {pinWithState("OUT", PinType::Output, QPoint(58, 0), LogicState::High)};
     }
     if (typeName == "Switch") {
         return {
@@ -1145,7 +1256,13 @@ QPoint CircuitCanvas::pinWorldPosition(const PlacedComponent &component, const P
     const double radians = component.rotationDegrees * 3.14159265358979323846 / 180.0;
     const double cosine = std::cos(radians);
     const double sine = std::sin(radians);
-    const QPoint offset = pin.offset();
+    QPoint offset = pin.offset();
+    if (component.mirrored) {
+        offset.setX(-offset.x());
+    }
+    if (component.mirroredVertically) {
+        offset.setY(-offset.y());
+    }
     const QPoint rotatedOffset(static_cast<int>(std::round(offset.x() * cosine - offset.y() * sine)),
                                static_cast<int>(std::round(offset.x() * sine + offset.y() * cosine)));
     return component.component.position() + rotatedOffset;
@@ -1312,6 +1429,9 @@ QString CircuitCanvas::componentDisplayName(const QString &typeName) const
     if (typeName == "VoltageSource") {
         return "Digital Voltage Source";
     }
+    if (typeName == "Battery") {
+        return "Digital Battery";
+    }
     if (typeName == "AndGate") {
         return "AND Gate";
     }
@@ -1320,6 +1440,12 @@ QString CircuitCanvas::componentDisplayName(const QString &typeName) const
     }
     if (typeName == "NotGate") {
         return "NOT Gate";
+    }
+    if (typeName == "NandGate") {
+        return "NAND Gate";
+    }
+    if (typeName == "XorGate") {
+        return "XOR Gate";
     }
 
     return typeName;
@@ -1344,6 +1470,9 @@ QString CircuitCanvas::defaultComponentValue(const QString &typeName) const
     }
     if (typeName == "VoltageSource") {
         return "5 V";
+    }
+    if (typeName == "Battery") {
+        return "9 V";
     }
     return QString();
 }
@@ -1392,6 +1521,9 @@ QString CircuitCanvas::labelPrefix(const QString &typeName) const
     if (typeName == "VoltageSource") {
         return "VDC";
     }
+    if (typeName == "Battery") {
+        return "BAT";
+    }
     if (typeName == "AndGate") {
         return "AND";
     }
@@ -1400,6 +1532,12 @@ QString CircuitCanvas::labelPrefix(const QString &typeName) const
     }
     if (typeName == "NotGate") {
         return "NOT";
+    }
+    if (typeName == "NandGate") {
+        return "NAND";
+    }
+    if (typeName == "XorGate") {
+        return "XOR";
     }
 
     return "U";
@@ -1503,6 +1641,8 @@ QString CircuitCanvas::evaluateCircuit()
             LogicState initialState = LogicState::Undefined;
             if (typeName == "VoltageSource" && pin.name() == "OUT") {
                 initialState = component.stateOn ? LogicState::High : LogicState::Low;
+            } else if (typeName == "Battery" && pin.name() == "OUT") {
+                initialState = LogicState::High;
             } else if (typeName == "Ground" && pin.name() == "GND") {
                 initialState = LogicState::Low;
             }
@@ -1577,6 +1717,8 @@ QString CircuitCanvas::evaluateCircuit()
             if (typeName == "VoltageSource") {
                 changed = setPinState(component.component.findPin("OUT"),
                                       component.stateOn ? LogicState::High : LogicState::Low) || changed;
+            } else if (typeName == "Battery") {
+                changed = setPinState(component.component.findPin("OUT"), LogicState::High) || changed;
             } else if (typeName == "Ground") {
                 changed = setPinState(component.component.findPin("GND"), LogicState::Low) || changed;
             } else if (typeName == "Switch") {
@@ -1585,7 +1727,8 @@ QString CircuitCanvas::evaluateCircuit()
                                       component.stateOn && input != nullptr
                                           ? input->state()
                                           : LogicState::Undefined) || changed;
-            } else if (typeName == "AndGate" || typeName == "OrGate") {
+            } else if (typeName == "AndGate" || typeName == "OrGate"
+                       || typeName == "NandGate" || typeName == "XorGate") {
                 const LogicState inputA = component.component.findPin("A")->state();
                 const LogicState inputB = component.component.findPin("B")->state();
                 LogicState output = LogicState::Undefined;
@@ -1595,12 +1738,21 @@ QString CircuitCanvas::evaluateCircuit()
                     } else if (inputA == LogicState::High && inputB == LogicState::High) {
                         output = LogicState::High;
                     }
-                } else {
+                } else if (typeName == "OrGate") {
                     if (inputA == LogicState::High || inputB == LogicState::High) {
                         output = LogicState::High;
                     } else if (inputA == LogicState::Low && inputB == LogicState::Low) {
                         output = LogicState::Low;
                     }
+                } else if (typeName == "NandGate") {
+                    if (inputA == LogicState::Low || inputB == LogicState::Low) {
+                        output = LogicState::High;
+                    } else if (inputA == LogicState::High && inputB == LogicState::High) {
+                        output = LogicState::Low;
+                    }
+                } else if (inputA != LogicState::Undefined
+                           && inputB != LogicState::Undefined) {
+                    output = inputA == inputB ? LogicState::Low : LogicState::High;
                 }
                 changed = setPinState(component.component.findPin("OUT"), output) || changed;
             } else if (typeName == "NotGate") {
@@ -1646,12 +1798,25 @@ QString CircuitCanvas::evaluateCircuit()
         statusParts.append(QString("Warning: circuit did not stabilize after %1 iterations")
                                .arg(MaximumIterations));
     }
+
+    QStringList floatingInputs;
+    for (const PlacedComponent &component : placedComponents) {
+        for (const Pin &pin : component.component.pins()) {
+            if (pin.type() == PinType::Input && pin.state() == LogicState::Undefined) {
+                floatingInputs.append(QString("%1.%2").arg(component.label, pin.name()));
+            }
+        }
+    }
+    if (!floatingInputs.isEmpty()) {
+        statusParts.append(QString("Floating input(s): %1")
+                               .arg(floatingInputs.join(", ")));
+    }
     return statusParts.join("; ");
 }
 
 void CircuitCanvas::performSimulationStep()
 {
-    evaluateCircuit();
+    lastSimulationStatus = evaluateCircuit();
     update();
 }
 
@@ -1669,9 +1834,14 @@ void CircuitCanvas::resetSimulationRuntime()
                 continue;
             }
 
-            const bool initiallyLow = (typeName == "VoltageSource" && pin.name() == "OUT")
-                                      || (typeName == "Ground" && pin.name() == "GND");
-            runtimePin->setState(initiallyLow ? LogicState::Low : LogicState::Undefined);
+            LogicState initialState = LogicState::Undefined;
+            if ((typeName == "VoltageSource" && pin.name() == "OUT")
+                || (typeName == "Ground" && pin.name() == "GND")) {
+                initialState = LogicState::Low;
+            } else if (typeName == "Battery" && pin.name() == "OUT") {
+                initialState = LogicState::High;
+            }
+            runtimePin->setState(initialState);
             runtimePin->setConnectedNodeId(QString());
         }
     }
@@ -1738,12 +1908,18 @@ void CircuitCanvas::drawComponent(QPainter &painter, const PlacedComponent &comp
         drawGround(painter);
     } else if (typeName == "VoltageSource") {
         drawVoltageSource(painter, component.stateOn ? 1 : 0);
+    } else if (typeName == "Battery") {
+        drawBattery(painter);
     } else if (typeName == "AndGate") {
         drawAndGate(painter);
     } else if (typeName == "OrGate") {
         drawOrGate(painter);
     } else if (typeName == "NotGate") {
         drawNotGate(painter);
+    } else if (typeName == "NandGate") {
+        drawNandGate(painter);
+    } else if (typeName == "XorGate") {
+        drawXorGate(painter);
     }
 }
 
@@ -1751,7 +1927,11 @@ void CircuitCanvas::drawComponentPins(QPainter &painter, const PlacedComponent &
 {
     painter.save();
     for (const Pin &pin : component.component.pins()) {
-        const QColor color = logicStateColor(pin.state());
+        const bool floatingInput = pin.type() == PinType::Input
+                                   && pin.state() == LogicState::Undefined;
+        const QColor color = floatingInput
+                                 ? QColor(245, 158, 11)
+                                 : logicStateColor(pin.state());
         QPen pinPen(color.darker(125), 2);
         pinPen.setCosmetic(true);
         painter.setPen(pinPen);
@@ -1794,11 +1974,15 @@ void CircuitCanvas::drawComponentStateText(QPainter &painter, const PlacedCompon
     } else if (typeName == "VoltageSource") {
         stateText = QString("OUT=%1")
                         .arg(logicStateText(component.component.findPin("OUT")->state()));
+    } else if (typeName == "Battery") {
+        stateText = QString("OUT=%1")
+                        .arg(logicStateText(component.component.findPin("OUT")->state()));
     } else if (typeName == "Led") {
         stateText = QString("IN=%1 %2")
                         .arg(logicStateText(component.component.findPin("IN")->state()),
                              component.stateOn ? "ON" : "OFF");
-    } else if (typeName == "AndGate" || typeName == "OrGate") {
+    } else if (typeName == "AndGate" || typeName == "OrGate"
+               || typeName == "NandGate" || typeName == "XorGate") {
         stateText = QString("A=%1 B=%2 OUT=%3")
                         .arg(logicStateText(component.component.findPin("A")->state()),
                              logicStateText(component.component.findPin("B")->state()),
@@ -1964,6 +2148,16 @@ void CircuitCanvas::drawVoltageSource(QPainter &painter, int value) const
     painter.drawText(QRectF(-10, 24, 20, 16), Qt::AlignCenter, QString::number(value));
 }
 
+void CircuitCanvas::drawBattery(QPainter &painter) const
+{
+    painter.drawLine(-58, 0, -22, 0);
+    painter.drawLine(-22, -24, -22, 24);
+    painter.drawLine(2, -14, 2, 14);
+    painter.drawLine(2, 0, 58, 0);
+    painter.drawText(QRectF(-45, -34, 18, 18), Qt::AlignCenter, "+");
+    painter.drawText(QRectF(9, -29, 18, 18), Qt::AlignCenter, "-");
+}
+
 void CircuitCanvas::drawAndGate(QPainter &painter) const
 {
     painter.drawLine(-58, -16, -28, -16);
@@ -2003,6 +2197,42 @@ void CircuitCanvas::drawNotGate(QPainter &painter) const
     triangle << QPointF(-26, -26) << QPointF(-26, 26) << QPointF(22, 0);
     painter.drawPolygon(triangle);
     painter.drawEllipse(QPointF(28, 0), 5, 5);
+}
+
+void CircuitCanvas::drawNandGate(QPainter &painter) const
+{
+    painter.drawLine(-58, -16, -28, -16);
+    painter.drawLine(-58, 16, -28, 16);
+    painter.drawLine(36, 0, 58, 0);
+
+    QPainterPath path;
+    path.moveTo(-28, -30);
+    path.lineTo(0, -30);
+    path.arcTo(QRectF(-30, -30, 60, 60), 90, -180);
+    path.lineTo(-28, 30);
+    path.closeSubpath();
+    painter.drawPath(path);
+    painter.drawEllipse(QPointF(33, 0), 4, 4);
+}
+
+void CircuitCanvas::drawXorGate(QPainter &painter) const
+{
+    painter.drawLine(-58, -16, -30, -16);
+    painter.drawLine(-58, 16, -30, 16);
+    painter.drawLine(26, 0, 58, 0);
+
+    QPainterPath gatePath;
+    gatePath.moveTo(-34, -30);
+    gatePath.quadTo(-12, 0, -34, 30);
+    gatePath.quadTo(2, 26, 28, 0);
+    gatePath.quadTo(2, -26, -34, -30);
+    gatePath.closeSubpath();
+    painter.drawPath(gatePath);
+
+    QPainterPath exclusiveCurve;
+    exclusiveCurve.moveTo(-43, -30);
+    exclusiveCurve.quadTo(-21, 0, -43, 30);
+    painter.drawPath(exclusiveCurve);
 }
 
 void CircuitCanvas::resetView()

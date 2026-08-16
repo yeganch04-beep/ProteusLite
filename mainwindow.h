@@ -33,6 +33,7 @@ private:
     bool openProjectFile(const QString &fileName);
     void saveProject();
     void saveProjectAs();
+    void exportCanvasImage();
     bool writeProjectFile(const QString &fileName);
     void showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight);
     void showStartPage();

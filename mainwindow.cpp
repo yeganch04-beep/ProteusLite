@@ -195,6 +195,7 @@ void MainWindow::createMenuActions()
     auto *openProjectAction = fileMenu->addAction("Open Project");
     auto *saveProjectAction = fileMenu->addAction("Save Project");
     auto *saveProjectAsAction = fileMenu->addAction("Save Project As...");
+    auto *exportCanvasAction = fileMenu->addAction("Export Canvas as PNG...");
     auto *backToStartAction = fileMenu->addAction("Back to Start Page");
     fileMenu->addSeparator();
     auto *exitAction = fileMenu->addAction("Exit");
@@ -203,6 +204,7 @@ void MainWindow::createMenuActions()
     connect(openProjectAction, &QAction::triggered, this, &MainWindow::openProject);
     connect(saveProjectAction, &QAction::triggered, this, &MainWindow::saveProject);
     connect(saveProjectAsAction, &QAction::triggered, this, &MainWindow::saveProjectAs);
+    connect(exportCanvasAction, &QAction::triggered, this, &MainWindow::exportCanvasImage);
     connect(backToStartAction, &QAction::triggered, this, &MainWindow::showStartPage);
     connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
 }
@@ -302,6 +304,40 @@ void MainWindow::saveProjectAs()
     }
     if (writeProjectFile(fileName)) {
         currentProjectFilePath = fileName;
+    }
+}
+
+void MainWindow::exportCanvasImage()
+{
+    if (pageStack->currentWidget() != editorPage) {
+        QMessageBox::information(this, "Export Canvas", "Create or open a project first.");
+        return;
+    }
+
+    QString suggestedName = currentProjectName.trimmed();
+    if (suggestedName.isEmpty()) {
+        suggestedName = "ProteusLite Circuit";
+    }
+    suggestedName.replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this, "Export Circuit Canvas", suggestedName + ".png",
+        "PNG images (*.png)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+    if (QFileInfo(fileName).suffix().isEmpty()) {
+        fileName += ".png";
+    }
+
+    QString errorMessage;
+    if (!circuitCanvas->exportToPng(fileName, &errorMessage)) {
+        QMessageBox::critical(this, "Export Canvas", errorMessage);
+        return;
+    }
+
+    if (projectLogLabel != nullptr) {
+        projectLogLabel->setText(QString("Canvas exported to PNG: %1").arg(fileName));
     }
 }
 
