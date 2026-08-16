@@ -35,7 +35,10 @@ private:
     void saveProjectAs();
     void exportCanvasImage();
     bool writeProjectFile(const QString &fileName);
-    void showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight);
+    void showEditorPage(const QString &projectName,
+                        int canvasWidth,
+                        int canvasHeight,
+                        bool infiniteCanvas = false);
     void showStartPage();
     void updateSimulationControls();
     QStringList recentProjectPaths() const;
@@ -59,6 +62,7 @@ private:
     QString currentProjectFilePath;
     int currentCanvasWidth;
     int currentCanvasHeight;
+    bool currentInfiniteCanvas;
 };
 
 #endif // MAINWINDOW_H

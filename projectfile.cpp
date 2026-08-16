@@ -94,6 +94,7 @@ bool ProjectFile::save(const QString &fileName,
     const QJsonObject root{
         {"formatVersion", project.formatVersion},
         {"projectName", project.projectName},
+        {"infiniteCanvas", project.infiniteCanvas},
         {"canvasSize", QJsonObject{{"width", project.canvasSize.width()},
                                    {"height", project.canvasSize.height()}}},
         {"components", components},
@@ -151,6 +152,7 @@ bool ProjectFile::load(const QString &fileName,
 
     ProjectFileData loaded;
     loaded.formatVersion = 1;
+    loaded.infiniteCanvas = root.value("infiniteCanvas").toBool(false);
     if (!requireString(root, "projectName", &loaded.projectName, errorMessage)) {
         return false;
     }

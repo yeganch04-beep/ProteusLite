@@ -39,6 +39,7 @@ MainWindow::MainWindow(QWidget *parent)
     , projectLogLabel(nullptr)
     , currentCanvasWidth(0)
     , currentCanvasHeight(0)
+    , currentInfiniteCanvas(false)
 {
     ui->setupUi(this);
 
@@ -218,7 +219,10 @@ void MainWindow::createNewProject()
     }
 
     currentProjectFilePath.clear();
-    showEditorPage(dialog.projectName(), dialog.canvasWidth(), dialog.canvasHeight());
+    showEditorPage(dialog.projectName(),
+                   dialog.canvasWidth(),
+                   dialog.canvasHeight(),
+                   dialog.isInfiniteCanvas());
 }
 
 void MainWindow::openProject()
@@ -258,7 +262,8 @@ bool MainWindow::openProjectFile(const QString &fileName)
 
     showEditorPage(project.projectName,
                    project.canvasSize.width(),
-                   project.canvasSize.height());
+                   project.canvasSize.height(),
+                   project.infiniteCanvas);
     currentProjectFilePath = fileName;
     addRecentProject(fileName);
     if (projectLogLabel != nullptr) {
@@ -358,20 +363,28 @@ bool MainWindow::writeProjectFile(const QString &fileName)
     return true;
 }
 
-void MainWindow::showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight)
+void MainWindow::showEditorPage(const QString &projectName,
+                                int canvasWidth,
+                                int canvasHeight,
+                                bool infiniteCanvas)
 {
     currentProjectName = projectName;
     currentCanvasWidth = canvasWidth;
     currentCanvasHeight = canvasHeight;
-    circuitCanvas->setDocumentCanvasSize(QSize(currentCanvasWidth, currentCanvasHeight));
+    currentInfiniteCanvas = infiniteCanvas;
+    circuitCanvas->setDocumentCanvasSize(
+        QSize(currentCanvasWidth, currentCanvasHeight), currentInfiniteCanvas);
 
     setWindowTitle(QString("ProteusLite - %1").arg(projectName));
 
     if (projectLogLabel != nullptr) {
-        projectLogLabel->setText(QString("New project created: %1 (%2 x %3)")
-                                     .arg(projectName)
-                                     .arg(currentCanvasWidth)
-                                     .arg(currentCanvasHeight));
+        projectLogLabel->setText(
+            currentInfiniteCanvas
+                ? QString("New project created: %1 (Infinite Canvas)").arg(projectName)
+                : QString("New project created: %1 (%2 x %3)")
+                      .arg(projectName)
+                      .arg(currentCanvasWidth)
+                      .arg(currentCanvasHeight));
     }
 
     pageStack->setCurrentWidget(editorPage);

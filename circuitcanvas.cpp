@@ -1,5 +1,6 @@
 #include "circuitcanvas.h"
 
+#include <QApplication>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QComboBox>
@@ -35,11 +36,13 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , isPanning(false)
     , isDraggingComponent(false)
     , isSelectingArea(false)
+    , isPendingPlacement(false)
     , isSpacePressed(false)
     , isWiringMode(false)
     , hasWireStartPoint(false)
     , panMouseButton(Qt::NoButton)
     , documentCanvasSize(794, 1123)
+    , infiniteCanvasMode(false)
     , simulationTimer(new QTimer(this))
     , currentSimulationState(SimulationState::Stopped)
     , nextComponentId(1)
@@ -125,22 +128,28 @@ void CircuitCanvas::setActiveComponentType(const QString &typeName)
     emit actionOccurred(QString("Selected component: %1").arg(componentDisplayName(typeName)));
 }
 
-void CircuitCanvas::setDocumentCanvasSize(const QSize &size)
+void CircuitCanvas::setDocumentCanvasSize(const QSize &size, bool infiniteCanvas)
 {
     if (!size.isValid() || size.isEmpty()) {
         return;
     }
     documentCanvasSize = size;
+    infiniteCanvasMode = infiniteCanvas;
     resetView();
-    emit actionOccurred(QString("Canvas size applied: %1 x %2")
-                            .arg(documentCanvasSize.width())
-                            .arg(documentCanvasSize.height()));
+    emit actionOccurred(infiniteCanvasMode
+                            ? "Infinite canvas enabled"
+                            : QString("Canvas size applied: %1 x %2")
+                                  .arg(documentCanvasSize.width())
+                                  .arg(documentCanvasSize.height()));
     update();
 }
 
 QPoint CircuitCanvas::boundedComponentPosition(const QPoint &worldPosition) const
 {
     QPoint bounded = snapToGrid(worldPosition);
+    if (infiniteCanvasMode) {
+        return bounded;
+    }
     if (!documentCanvasSize.isValid() || documentCanvasSize.isEmpty()) {
         return bounded;
     }
@@ -200,6 +209,7 @@ ProjectFileData CircuitCanvas::projectData(const QString &projectName,
     ProjectFileData project;
     project.projectName = projectName;
     project.canvasSize = canvasSize;
+    project.infiniteCanvas = infiniteCanvasMode;
     project.components.reserve(placedComponents.size());
     project.wires.reserve(placedWires.size());
 
@@ -263,6 +273,7 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
     selectedWireIndices.clear();
     isDraggingComponent = false;
     isSelectingArea = false;
+    isPendingPlacement = false;
     isWiringMode = false;
     hasWireStartPoint = false;
     wireStartComponentId.clear();
@@ -384,18 +395,43 @@ bool CircuitCanvas::exportToPng(const QString &fileName,
         return false;
     }
 
-    QPixmap image(documentCanvasSize);
+    QRectF exportWorldRect(QPointF(0.0, 0.0), QSizeF(documentCanvasSize));
+    if (infiniteCanvasMode) {
+        if (placedComponents.isEmpty()) {
+            exportWorldRect = QRectF(-400.0, -300.0, 800.0, 600.0);
+        } else {
+            exportWorldRect = componentBounds(
+                placedComponents.constFirst().component.position());
+            for (const PlacedComponent &component : placedComponents) {
+                exportWorldRect = exportWorldRect.united(
+                    componentBounds(component.component.position()));
+            }
+            exportWorldRect = exportWorldRect.adjusted(-GridSpacing * 2,
+                                                       -GridSpacing * 2,
+                                                       GridSpacing * 2,
+                                                       GridSpacing * 2);
+        }
+    }
+
+    const QSize exportSize(std::max(1, static_cast<int>(std::ceil(exportWorldRect.width()))),
+                           std::max(1, static_cast<int>(std::ceil(exportWorldRect.height()))));
+    QPixmap image(exportSize);
     image.fill(Qt::white);
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.translate(-exportWorldRect.topLeft());
 
     QPen gridPen(QColor(225, 225, 225));
     painter.setPen(gridPen);
-    for (int x = 0; x <= documentCanvasSize.width(); x += GridSpacing) {
-        painter.drawLine(QPoint(x, 0), QPoint(x, documentCanvasSize.height()));
+    const int firstGridX = static_cast<int>(std::floor(exportWorldRect.left() / GridSpacing)) * GridSpacing;
+    const int lastGridX = static_cast<int>(std::ceil(exportWorldRect.right() / GridSpacing)) * GridSpacing;
+    const int firstGridY = static_cast<int>(std::floor(exportWorldRect.top() / GridSpacing)) * GridSpacing;
+    const int lastGridY = static_cast<int>(std::ceil(exportWorldRect.bottom() / GridSpacing)) * GridSpacing;
+    for (int x = firstGridX; x <= lastGridX; x += GridSpacing) {
+        painter.drawLine(QPoint(x, firstGridY), QPoint(x, lastGridY));
     }
-    for (int y = 0; y <= documentCanvasSize.height(); y += GridSpacing) {
-        painter.drawLine(QPoint(0, y), QPoint(documentCanvasSize.width(), y));
+    for (int y = firstGridY; y <= lastGridY; y += GridSpacing) {
+        painter.drawLine(QPoint(firstGridX, y), QPoint(lastGridX, y));
     }
 
     for (const Wire &wire : placedWires) {
@@ -791,6 +827,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
     setFocus();
 
     if (event->button() == Qt::MiddleButton
+        || event->button() == Qt::RightButton
         || (event->button() == Qt::LeftButton && isSpacePressed)) {
         isPanning = true;
         panMouseButton = event->button();
@@ -923,15 +960,24 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
 
         const bool forceAreaSelection = event->modifiers().testFlag(Qt::ControlModifier);
         if (!activeComponentType.isEmpty() && !forceAreaSelection) {
-            placeComponent(activeComponentType, worldPoint);
+            isPendingPlacement = true;
+            pendingPlacementWorldPoint = worldPoint;
+            pendingPressScreenPoint = event->pos();
             event->accept();
             return;
         }
 
         clearSelection();
-        isSelectingArea = true;
-        selectionStartWorldPoint = worldPoint;
-        selectionEndWorldPoint = worldPoint;
+        if (forceAreaSelection) {
+            isSelectingArea = true;
+            selectionStartWorldPoint = worldPoint;
+            selectionEndWorldPoint = worldPoint;
+        } else {
+            isPanning = true;
+            panMouseButton = Qt::LeftButton;
+            lastPanPoint = event->pos();
+            setCursor(Qt::ClosedHandCursor);
+        }
         update();
         event->accept();
         return;
@@ -950,6 +996,13 @@ void CircuitCanvas::mouseReleaseEvent(QMouseEvent *event)
         } else {
             unsetCursor();
         }
+        event->accept();
+        return;
+    }
+
+    if (event->button() == Qt::LeftButton && isPendingPlacement) {
+        isPendingPlacement = false;
+        placeComponent(activeComponentType, pendingPlacementWorldPoint);
         event->accept();
         return;
     }
@@ -995,30 +1048,43 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
     painter.translate(panOffset);
     painter.scale(zoomFactor, zoomFactor);
 
-    const QRectF documentRect(0.0,
-                              0.0,
-                              documentCanvasSize.width(),
-                              documentCanvasSize.height());
+    const QPointF topLeft = screenToWorld(QPoint(0, 0));
+    const QPointF bottomRight = screenToWorld(QPoint(width(), height()));
+    const QRectF visibleWorldRect = QRectF(topLeft, bottomRight).normalized();
+    const QRectF documentRect = infiniteCanvasMode
+                                    ? visibleWorldRect.adjusted(-GridSpacing,
+                                                                -GridSpacing,
+                                                                GridSpacing,
+                                                                GridSpacing)
+                                    : QRectF(0.0,
+                                             0.0,
+                                             documentCanvasSize.width(),
+                                             documentCanvasSize.height());
     painter.fillRect(documentRect, Qt::white);
-    QPen pageBorderPen(QColor(148, 163, 184), 1.2);
-    pageBorderPen.setCosmetic(true);
-    painter.setPen(pageBorderPen);
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(documentRect);
+    if (!infiniteCanvasMode) {
+        QPen pageBorderPen(QColor(148, 163, 184), 1.2);
+        pageBorderPen.setCosmetic(true);
+        painter.setPen(pageBorderPen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(documentRect);
+    }
 
     QPen gridPen(QColor(225, 225, 225));
     gridPen.setCosmetic(true);
     painter.setPen(gridPen);
 
-    const QPointF topLeft = screenToWorld(QPoint(0, 0));
-    const QPointF bottomRight = screenToWorld(QPoint(width(), height()));
-
-    const int firstX = std::max(0, static_cast<int>(std::floor(topLeft.x() / GridSpacing)) * GridSpacing);
-    const int lastX = std::min(documentCanvasSize.width(),
-                               static_cast<int>(std::ceil(bottomRight.x() / GridSpacing)) * GridSpacing);
-    const int firstY = std::max(0, static_cast<int>(std::floor(topLeft.y() / GridSpacing)) * GridSpacing);
-    const int lastY = std::min(documentCanvasSize.height(),
-                               static_cast<int>(std::ceil(bottomRight.y() / GridSpacing)) * GridSpacing);
+    const int visibleFirstX = static_cast<int>(std::floor(visibleWorldRect.left() / GridSpacing)) * GridSpacing;
+    const int visibleLastX = static_cast<int>(std::ceil(visibleWorldRect.right() / GridSpacing)) * GridSpacing;
+    const int visibleFirstY = static_cast<int>(std::floor(visibleWorldRect.top() / GridSpacing)) * GridSpacing;
+    const int visibleLastY = static_cast<int>(std::ceil(visibleWorldRect.bottom() / GridSpacing)) * GridSpacing;
+    const int firstX = infiniteCanvasMode ? visibleFirstX : std::max(0, visibleFirstX);
+    const int lastX = infiniteCanvasMode
+                          ? visibleLastX
+                          : std::min(documentCanvasSize.width(), visibleLastX);
+    const int firstY = infiniteCanvasMode ? visibleFirstY : std::max(0, visibleFirstY);
+    const int lastY = infiniteCanvasMode
+                          ? visibleLastY
+                          : std::min(documentCanvasSize.height(), visibleLastY);
 
     for (int x = firstX; x <= lastX; x += GridSpacing) {
         painter.drawLine(QPointF(x, firstY), QPointF(x, lastY));
@@ -1098,6 +1164,16 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
 
 void CircuitCanvas::mouseMoveEvent(QMouseEvent *event)
 {
+    if (isPendingPlacement
+        && (event->pos() - pendingPressScreenPoint).manhattanLength()
+               >= QApplication::startDragDistance()) {
+        isPendingPlacement = false;
+        isPanning = true;
+        panMouseButton = Qt::LeftButton;
+        lastPanPoint = pendingPressScreenPoint;
+        setCursor(Qt::ClosedHandCursor);
+    }
+
     if (isPanning) {
         const QPoint movement = event->pos() - lastPanPoint;
         panOffset += movement;
@@ -1303,7 +1379,7 @@ bool CircuitCanvas::wireIntersectsSelection(const Wire &wire,
 
 QPoint CircuitCanvas::boundedGroupMovement(const QPoint &requestedMovement) const
 {
-    if (dragStartComponentPositions.isEmpty()
+    if (infiniteCanvasMode || dragStartComponentPositions.isEmpty()
         || !documentCanvasSize.isValid() || documentCanvasSize.isEmpty()) {
         return requestedMovement;
     }

@@ -43,7 +43,7 @@ public:
 
     QPoint snapToGrid(const QPoint &point) const;
     void setActiveComponentType(const QString &typeName);
-    void setDocumentCanvasSize(const QSize &size);
+    void setDocumentCanvasSize(const QSize &size, bool infiniteCanvas = false);
     SimulationState simulationState() const;
     ProjectFileData projectData(const QString &projectName,
                                 const QSize &canvasSize) const;
@@ -185,12 +185,15 @@ private:
     bool isPanning;
     bool isDraggingComponent;
     bool isSelectingArea;
+    bool isPendingPlacement;
     bool isSpacePressed;
     bool isWiringMode;
     bool hasWireStartPoint;
     QPoint lastPanPoint;
     Qt::MouseButton panMouseButton;
     QPoint dragStartWorldPoint;
+    QPoint pendingPlacementWorldPoint;
+    QPoint pendingPressScreenPoint;
     QPoint selectionStartWorldPoint;
     QPoint selectionEndWorldPoint;
     QPoint wireStartPoint;
@@ -201,6 +204,7 @@ private:
     QString hoveredPinName;
     QPoint hoveredPinPosition;
     QSize documentCanvasSize;
+    bool infiniteCanvasMode;
     QString activeComponentType;
     QVector<PlacedComponent> placedComponents;
     QVector<Wire> placedWires;
