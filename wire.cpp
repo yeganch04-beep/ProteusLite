@@ -49,6 +49,16 @@ void Wire::setState(LogicState state)
     m_state = state;
 }
 
+void Wire::replaceComponentId(const QString &oldId, const QString &newId)
+{
+    if (m_startComponentId == oldId) {
+        m_startComponentId = newId;
+    }
+    if (m_endComponentId == oldId) {
+        m_endComponentId = newId;
+    }
+}
+
 const QVector<QPoint> &Wire::pathPoints() const
 {
     return m_pathPoints;

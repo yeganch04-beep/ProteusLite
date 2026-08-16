@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 
 class QLabel;
 class QPushButton;
@@ -29,12 +30,16 @@ private:
     void createMenuActions();
     void createNewProject();
     void openProject();
+    bool openProjectFile(const QString &fileName);
     void saveProject();
     void saveProjectAs();
     bool writeProjectFile(const QString &fileName);
     void showEditorPage(const QString &projectName, int canvasWidth, int canvasHeight);
     void showStartPage();
     void updateSimulationControls();
+    QStringList recentProjectPaths() const;
+    void addRecentProject(const QString &fileName);
+    void refreshRecentProjects();
 
     Ui::MainWindow *ui;
     QStackedWidget *pageStack;
@@ -45,6 +50,8 @@ private:
     QPushButton *pauseButton;
     QPushButton *stopButton;
     QPushButton *resetButton;
+    QPushButton *stepButton;
+    QPushButton *propertiesButton;
     QLabel *simulationStatusLabel;
     QLabel *projectLogLabel;
     QString currentProjectName;

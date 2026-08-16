@@ -11,6 +11,7 @@ struct ProjectComponentData
     QString id;
     QString type;
     QString label;
+    QString value;
     QPoint position;
     int rotationDegrees = 0;
     bool stateOn = false;

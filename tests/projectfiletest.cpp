@@ -27,6 +27,7 @@ void ProjectFileTest::roundTripPreservesProjectData()
     input.id = "component-1";
     input.type = "VoltageSource";
     input.label = "VDC1";
+    input.value = "5 V";
     input.position = QPoint(100, 200);
     input.rotationDegrees = 90;
     input.stateOn = true;
@@ -60,6 +61,7 @@ void ProjectFileTest::roundTripPreservesProjectData()
     QCOMPARE(loaded.components[0].id, input.id);
     QCOMPARE(loaded.components[0].type, input.type);
     QCOMPARE(loaded.components[0].label, input.label);
+    QCOMPARE(loaded.components[0].value, input.value);
     QCOMPARE(loaded.components[0].position, input.position);
     QCOMPARE(loaded.components[0].rotationDegrees, input.rotationDegrees);
     QCOMPARE(loaded.components[0].stateOn, input.stateOn);

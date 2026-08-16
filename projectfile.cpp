@@ -71,6 +71,7 @@ bool ProjectFile::save(const QString &fileName,
             {"id", component.id},
             {"type", component.type},
             {"label", component.label},
+            {"value", component.value},
             {"position", pointToJson(component.position)},
             {"rotationDegrees", component.rotationDegrees},
             {"stateOn", component.stateOn}
@@ -192,6 +193,7 @@ bool ProjectFile::load(const QString &fileName,
         componentIds.insert(component.id);
         component.rotationDegrees = object.value("rotationDegrees").toInt();
         component.stateOn = object.value("stateOn").toBool(false);
+        component.value = object.value("value").toString();
         loaded.components.append(component);
     }
 

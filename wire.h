@@ -23,6 +23,7 @@ public:
     QString endPinName() const;
     LogicState state() const;
     void setState(LogicState state);
+    void replaceComponentId(const QString &oldId, const QString &newId);
 
     const QVector<QPoint> &pathPoints() const;
     void setPathPoints(const QVector<QPoint> &pathPoints);

@@ -16,6 +16,7 @@ public:
     QString name() const;
     QPoint position() const;
 
+    void setId(const QString &id);
     void setPosition(const QPoint &position);
     void addPin(const Pin &pin);
 

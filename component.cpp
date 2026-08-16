@@ -22,6 +22,11 @@ QPoint Component::position() const
     return m_position;
 }
 
+void Component::setId(const QString &id)
+{
+    m_id = id;
+}
+
 void Component::setPosition(const QPoint &position)
 {
     m_position = position;

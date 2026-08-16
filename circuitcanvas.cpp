@@ -2,9 +2,16 @@
 
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDropEvent>
+#include <QFormLayout>
 #include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -26,6 +33,7 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , isDraggingComponent(false)
     , isWiringMode(false)
     , hasWireStartPoint(false)
+    , documentCanvasSize(794, 1123)
     , simulationTimer(new QTimer(this))
     , currentSimulationState(SimulationState::Stopped)
     , nextComponentId(1)
@@ -111,6 +119,39 @@ void CircuitCanvas::setActiveComponentType(const QString &typeName)
     emit actionOccurred(QString("Selected component: %1").arg(componentDisplayName(typeName)));
 }
 
+void CircuitCanvas::setDocumentCanvasSize(const QSize &size)
+{
+    if (!size.isValid() || size.isEmpty()) {
+        return;
+    }
+    documentCanvasSize = size;
+    resetView();
+    emit actionOccurred(QString("Canvas size applied: %1 x %2")
+                            .arg(documentCanvasSize.width())
+                            .arg(documentCanvasSize.height()));
+    update();
+}
+
+QPoint CircuitCanvas::boundedComponentPosition(const QPoint &worldPosition) const
+{
+    QPoint bounded = snapToGrid(worldPosition);
+    if (!documentCanvasSize.isValid() || documentCanvasSize.isEmpty()) {
+        return bounded;
+    }
+
+    constexpr int HorizontalMargin = 80;
+    constexpr int VerticalMargin = 60;
+    const int maximumX = std::max(HorizontalMargin,
+                                  (documentCanvasSize.width() - HorizontalMargin)
+                                      / GridSpacing * GridSpacing);
+    const int maximumY = std::max(VerticalMargin,
+                                  (documentCanvasSize.height() - VerticalMargin)
+                                      / GridSpacing * GridSpacing);
+    bounded.setX(std::clamp(bounded.x(), HorizontalMargin, maximumX));
+    bounded.setY(std::clamp(bounded.y(), VerticalMargin, maximumY));
+    return bounded;
+}
+
 bool CircuitCanvas::placeComponent(const QString &typeName, const QPoint &worldPosition)
 {
     const QString normalizedTypeName = typeName.trimmed();
@@ -121,14 +162,16 @@ bool CircuitCanvas::placeComponent(const QString &typeName, const QPoint &worldP
         return false;
     }
 
-    const QPoint snappedPosition = snapToGrid(worldPosition);
+    const QPoint snappedPosition = boundedComponentPosition(worldPosition);
     Component model(createComponentId(), normalizedTypeName, snappedPosition);
     for (const Pin &pin : pins) {
         model.addPin(pin);
     }
 
     placedComponents.append(
-        PlacedComponent(model, createComponentLabel(normalizedTypeName)));
+        PlacedComponent(model,
+                        createComponentLabel(normalizedTypeName),
+                        defaultComponentValue(normalizedTypeName)));
     selectedComponentIndex = placedComponents.size() - 1;
     selectedWireIndex = -1;
     evaluateCircuit();
@@ -160,6 +203,7 @@ ProjectFileData CircuitCanvas::projectData(const QString &projectName,
         component.id = placed.component.id();
         component.type = placed.component.name();
         component.label = placed.label;
+        component.value = placed.value;
         component.position = placed.component.position();
         component.rotationDegrees = placed.rotationDegrees;
         component.stateOn = placed.stateOn;
@@ -232,7 +276,11 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
         for (const Pin &pin : pins) {
             model.addPin(pin);
         }
-        PlacedComponent placed(model, stored.label);
+        PlacedComponent placed(model,
+                               stored.label,
+                               stored.value.isEmpty()
+                                   ? defaultComponentValue(stored.type)
+                                   : stored.value);
         placed.rotationDegrees = ((stored.rotationDegrees % 360) + 360) % 360;
         placed.stateOn = stored.stateOn;
         placedComponents.append(placed);
@@ -348,6 +396,135 @@ void CircuitCanvas::resetSimulation()
     update();
 }
 
+void CircuitCanvas::stepSimulation()
+{
+    if (currentSimulationState == SimulationState::Running) {
+        emit actionOccurred("Pause the simulation before using Step");
+        return;
+    }
+
+    simulationTimer->stop();
+    performSimulationStep();
+    emit actionOccurred("Simulation advanced by one step");
+}
+
+void CircuitCanvas::editSelectedComponentProperties()
+{
+    if (selectedComponentIndex < 0 || selectedComponentIndex >= placedComponents.size()) {
+        emit actionOccurred("Select a component before opening Properties");
+        return;
+    }
+
+    PlacedComponent &selected = placedComponents[selectedComponentIndex];
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString("Properties - %1").arg(selected.label));
+    dialog.setMinimumWidth(360);
+
+    auto *layout = new QFormLayout(&dialog);
+    auto *typeLabel = new QLabel(componentDisplayName(selected.component.name()), &dialog);
+    auto *idEdit = new QLineEdit(selected.component.id(), &dialog);
+    auto *labelEdit = new QLineEdit(selected.label, &dialog);
+    auto *valueEdit = new QLineEdit(selected.value, &dialog);
+    idEdit->setObjectName("propertyIdEdit");
+    labelEdit->setObjectName("propertyLabelEdit");
+    valueEdit->setObjectName("propertyValueEdit");
+    idEdit->setMaxLength(60);
+    labelEdit->setMaxLength(40);
+    valueEdit->setMaxLength(60);
+    layout->addRow("Type:", typeLabel);
+    layout->addRow("ID:", idEdit);
+    layout->addRow("Label:", labelEdit);
+    layout->addRow("Value:", valueEdit);
+
+    QComboBox *stateCombo = nullptr;
+    const QString typeName = selected.component.name();
+    if (typeName == "VoltageSource" || typeName == "Switch") {
+        stateCombo = new QComboBox(&dialog);
+        stateCombo->setObjectName("propertyStateCombo");
+        if (typeName == "VoltageSource") {
+            stateCombo->addItems({"0 (Low)", "1 (High)"});
+        } else {
+            stateCombo->addItems({"Open", "Closed"});
+        }
+        stateCombo->setCurrentIndex(selected.stateOn ? 1 : 0);
+        layout->addRow("State:", stateCombo);
+    } else {
+        auto *stateLabel = new QLabel("Not interactive", &dialog);
+        layout->addRow("State:", stateLabel);
+    }
+
+    auto *buttonBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addRow(buttonBox);
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    while (dialog.exec() == QDialog::Accepted) {
+        const QString newId = idEdit->text().trimmed();
+        const QString newLabel = labelEdit->text().trimmed();
+        const QString newValue = valueEdit->text().trimmed();
+        if (newId.isEmpty() || newLabel.isEmpty()) {
+            QMessageBox::warning(&dialog, "Properties", "ID and Label cannot be empty.");
+            continue;
+        }
+
+        bool duplicateId = false;
+        bool duplicateLabel = false;
+        for (int index = 0; index < placedComponents.size(); ++index) {
+            if (index == selectedComponentIndex) {
+                continue;
+            }
+            duplicateId = duplicateId
+                          || placedComponents[index].component.id().compare(
+                                 newId, Qt::CaseInsensitive) == 0;
+            duplicateLabel = duplicateLabel
+                             || placedComponents[index].label.compare(
+                                    newLabel, Qt::CaseInsensitive) == 0;
+        }
+        if (duplicateId) {
+            QMessageBox::warning(&dialog, "Properties", "Component IDs must be unique.");
+            continue;
+        }
+        if (duplicateLabel) {
+            QMessageBox::warning(&dialog, "Properties", "Component labels must be unique.");
+            continue;
+        }
+
+        const QString oldId = selected.component.id();
+        const QString oldLabel = selected.label;
+        if (oldId != newId) {
+            selected.component.setId(newId);
+            for (Wire &wire : placedWires) {
+                wire.replaceComponentId(oldId, newId);
+            }
+            if (hoveredPinComponentId == oldId) {
+                hoveredPinComponentId = newId;
+            }
+            if (wireStartComponentId == oldId) {
+                wireStartComponentId = newId;
+            }
+        }
+        selected.label = newLabel;
+        selected.value = newValue;
+        if (stateCombo != nullptr) {
+            selected.stateOn = stateCombo->currentIndex() == 1;
+        }
+
+        const QString simulationStatus = evaluateCircuit();
+        QString message = QString("Properties updated: %1 -> %2; ID=%3; Value=%4")
+                              .arg(oldLabel,
+                                   selected.label,
+                                   selected.component.id(),
+                                   selected.value.isEmpty() ? "-" : selected.value);
+        if (!simulationStatus.isEmpty()) {
+            message += " - " + simulationStatus;
+        }
+        emit actionOccurred(message);
+        update();
+        return;
+    }
+}
+
 void CircuitCanvas::keyPressEvent(QKeyEvent *event)
 {
     if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_0) {
@@ -433,6 +610,12 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    if (event->key() == Qt::Key_P) {
+        editSelectedComponentProperties();
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_R && selectedComponentIndex >= 0) {
         PlacedComponent &component = placedComponents[selectedComponentIndex];
         component.rotationDegrees = (component.rotationDegrees + 90) % 360;
@@ -464,6 +647,14 @@ void CircuitCanvas::mouseDoubleClickEvent(QMouseEvent *event)
     selectedComponentIndex = clickedIndex;
     selectedWireIndex = -1;
     isDraggingComponent = false;
+
+    const bool directlyInteractive = component.component.name() == "VoltageSource"
+                                     || component.component.name() == "Switch";
+    if (currentSimulationState != SimulationState::Running && !directlyInteractive) {
+        editSelectedComponentProperties();
+        event->accept();
+        return;
+    }
 
     QString actionMessage;
 
@@ -658,10 +849,21 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
     Q_UNUSED(event)
 
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::white);
+    painter.fillRect(rect(), QColor(226, 232, 240));
 
     painter.translate(panOffset);
     painter.scale(zoomFactor, zoomFactor);
+
+    const QRectF documentRect(0.0,
+                              0.0,
+                              documentCanvasSize.width(),
+                              documentCanvasSize.height());
+    painter.fillRect(documentRect, Qt::white);
+    QPen pageBorderPen(QColor(148, 163, 184), 1.2);
+    pageBorderPen.setCosmetic(true);
+    painter.setPen(pageBorderPen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(documentRect);
 
     QPen gridPen(QColor(225, 225, 225));
     gridPen.setCosmetic(true);
@@ -670,10 +872,12 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
     const QPointF topLeft = screenToWorld(QPoint(0, 0));
     const QPointF bottomRight = screenToWorld(QPoint(width(), height()));
 
-    const int firstX = static_cast<int>(std::floor(topLeft.x() / GridSpacing)) * GridSpacing;
-    const int lastX = static_cast<int>(std::ceil(bottomRight.x() / GridSpacing)) * GridSpacing;
-    const int firstY = static_cast<int>(std::floor(topLeft.y() / GridSpacing)) * GridSpacing;
-    const int lastY = static_cast<int>(std::ceil(bottomRight.y() / GridSpacing)) * GridSpacing;
+    const int firstX = std::max(0, static_cast<int>(std::floor(topLeft.x() / GridSpacing)) * GridSpacing);
+    const int lastX = std::min(documentCanvasSize.width(),
+                               static_cast<int>(std::ceil(bottomRight.x() / GridSpacing)) * GridSpacing);
+    const int firstY = std::max(0, static_cast<int>(std::floor(topLeft.y() / GridSpacing)) * GridSpacing);
+    const int lastY = std::min(documentCanvasSize.height(),
+                               static_cast<int>(std::ceil(bottomRight.y() / GridSpacing)) * GridSpacing);
 
     for (int x = firstX; x <= lastX; x += GridSpacing) {
         painter.drawLine(QPointF(x, firstY), QPointF(x, lastY));
@@ -711,6 +915,28 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
             drawSelectedComponentBounds(painter, componentBounds(component.component.position()));
         }
     }
+
+    if (!hoveredPinComponentId.isEmpty() && !hoveredPinName.isEmpty()) {
+        painter.save();
+        QPen hoverPen(QColor(245, 158, 11), 2.5);
+        hoverPen.setCosmetic(true);
+        painter.setPen(hoverPen);
+        painter.setBrush(QColor(254, 243, 199, 210));
+        painter.drawEllipse(QPointF(hoveredPinPosition), 8.0, 8.0);
+
+        QFont hoverFont = painter.font();
+        hoverFont.setBold(true);
+        hoverFont.setPointSize(8);
+        painter.setFont(hoverFont);
+        painter.setPen(QColor(146, 64, 14));
+        painter.drawText(QRectF(hoveredPinPosition.x() - 55,
+                                hoveredPinPosition.y() - 28,
+                                110,
+                                16),
+                         Qt::AlignCenter,
+                         pinDisplayName(hoveredPinComponentId, hoveredPinName));
+        painter.restore();
+    }
 }
 
 void CircuitCanvas::mouseMoveEvent(QMouseEvent *event)
@@ -724,7 +950,8 @@ void CircuitCanvas::mouseMoveEvent(QMouseEvent *event)
 
     if (isDraggingComponent && selectedComponentIndex >= 0) {
         const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
-        placedComponents[selectedComponentIndex].component.setPosition(snapToGrid(worldPoint));
+        placedComponents[selectedComponentIndex].component.setPosition(
+            boundedComponentPosition(worldPoint));
         update();
     }
 
@@ -734,7 +961,44 @@ void CircuitCanvas::mouseMoveEvent(QMouseEvent *event)
         update();
     }
 
+    const QPoint hoverWorldPoint = screenToWorld(event->pos()).toPoint();
+    QString hoverComponentId;
+    QString hoverPinName;
+    QPoint hoverPosition;
+    const bool pinFound = findNearestPin(hoverWorldPoint,
+                                         &hoverComponentId,
+                                         &hoverPinName,
+                                         &hoverPosition);
+    const bool hoverChanged = hoveredPinComponentId != hoverComponentId
+                              || hoveredPinName != hoverPinName
+                              || (pinFound && hoveredPinPosition != hoverPosition);
+    if (pinFound) {
+        hoveredPinComponentId = hoverComponentId;
+        hoveredPinName = hoverPinName;
+        hoveredPinPosition = hoverPosition;
+    } else {
+        hoveredPinComponentId.clear();
+        hoveredPinName.clear();
+    }
+    if (hoverChanged) {
+        emit pinHoverChanged(pinFound
+                                 ? pinDisplayName(hoveredPinComponentId, hoveredPinName)
+                                 : QString());
+        update();
+    }
+
     emitMousePosition(event->pos());
+}
+
+void CircuitCanvas::leaveEvent(QEvent *event)
+{
+    if (!hoveredPinComponentId.isEmpty() || !hoveredPinName.isEmpty()) {
+        hoveredPinComponentId.clear();
+        hoveredPinName.clear();
+        emit pinHoverChanged(QString());
+        update();
+    }
+    QWidget::leaveEvent(event);
 }
 
 void CircuitCanvas::wheelEvent(QWheelEvent *event)
@@ -1028,7 +1292,11 @@ QString CircuitCanvas::pinDisplayName(const QString &componentId, const QString 
 
 QString CircuitCanvas::createComponentId()
 {
-    return QString("component-%1").arg(nextComponentId++);
+    QString candidate;
+    do {
+        candidate = QString("component-%1").arg(nextComponentId++);
+    } while (findComponent(candidate) != nullptr);
+    return candidate;
 }
 
 QString CircuitCanvas::createWireId()
@@ -1057,10 +1325,42 @@ QString CircuitCanvas::componentDisplayName(const QString &typeName) const
     return typeName;
 }
 
+QString CircuitCanvas::defaultComponentValue(const QString &typeName) const
+{
+    if (typeName == "Resistor") {
+        return "1 kOhm";
+    }
+    if (typeName == "Capacitor") {
+        return "1 uF";
+    }
+    if (typeName == "Inductor") {
+        return "1 mH";
+    }
+    if (typeName == "Diode") {
+        return "Generic";
+    }
+    if (typeName == "Led") {
+        return "Red";
+    }
+    if (typeName == "VoltageSource") {
+        return "5 V";
+    }
+    return QString();
+}
+
 QString CircuitCanvas::createComponentLabel(const QString &typeName)
 {
     const QString prefix = labelPrefix(typeName);
-    const int nextNumber = labelCounters.value(prefix, 0) + 1;
+    int nextNumber = labelCounters.value(prefix, 0) + 1;
+    auto labelExists = [this](const QString &candidate) {
+        return std::any_of(placedComponents.cbegin(), placedComponents.cend(),
+                           [&candidate](const PlacedComponent &component) {
+                               return component.label.compare(candidate, Qt::CaseInsensitive) == 0;
+                           });
+    };
+    while (labelExists(QString("%1%2").arg(prefix).arg(nextNumber))) {
+        ++nextNumber;
+    }
     labelCounters.insert(prefix, nextNumber);
 
     return QString("%1%2").arg(prefix).arg(nextNumber);
@@ -1351,10 +1651,6 @@ QString CircuitCanvas::evaluateCircuit()
 
 void CircuitCanvas::performSimulationStep()
 {
-    if (currentSimulationState != SimulationState::Running) {
-        return;
-    }
-
     evaluateCircuit();
     update();
 }
@@ -1514,8 +1810,14 @@ void CircuitCanvas::drawComponentStateText(QPainter &painter, const PlacedCompon
     } else if (typeName == "Ground") {
         stateText = QString("GND=%1")
                         .arg(logicStateText(component.component.findPin("GND")->state()));
+    } else if (!component.value.isEmpty()) {
+        stateText = component.value;
     } else {
         return;
+    }
+
+    if (!component.value.isEmpty() && stateText != component.value) {
+        stateText += " | " + component.value;
     }
 
     painter.save();
