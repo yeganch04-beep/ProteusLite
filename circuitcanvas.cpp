@@ -9,6 +9,7 @@
 #include <QFormLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineF>
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMessageBox>
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 CircuitCanvas::CircuitCanvas(QWidget *parent)
@@ -32,8 +34,11 @@ CircuitCanvas::CircuitCanvas(QWidget *parent)
     , panOffset(0.0, 0.0)
     , isPanning(false)
     , isDraggingComponent(false)
+    , isSelectingArea(false)
+    , isSpacePressed(false)
     , isWiringMode(false)
     , hasWireStartPoint(false)
+    , panMouseButton(Qt::NoButton)
     , documentCanvasSize(794, 1123)
     , simulationTimer(new QTimer(this))
     , currentSimulationState(SimulationState::Stopped)
@@ -173,8 +178,7 @@ bool CircuitCanvas::placeComponent(const QString &typeName, const QPoint &worldP
         PlacedComponent(model,
                         createComponentLabel(normalizedTypeName),
                         defaultComponentValue(normalizedTypeName)));
-    selectedComponentIndex = placedComponents.size() - 1;
-    selectedWireIndex = -1;
+    selectSingleComponent(placedComponents.size() - 1);
     evaluateCircuit();
 
     emit actionOccurred(QString("Placed %1 at X: %2, Y: %3")
@@ -238,6 +242,8 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
         nextWireId = 1;
         selectedComponentIndex = -1;
         selectedWireIndex = -1;
+        selectedComponentIndices.clear();
+        selectedWireIndices.clear();
         if (errorMessage != nullptr) {
             *errorMessage = message;
         }
@@ -253,7 +259,10 @@ bool CircuitCanvas::loadProjectData(const ProjectFileData &project,
     activeComponentType.clear();
     selectedComponentIndex = -1;
     selectedWireIndex = -1;
+    selectedComponentIndices.clear();
+    selectedWireIndices.clear();
     isDraggingComponent = false;
+    isSelectingArea = false;
     isWiringMode = false;
     hasWireStartPoint = false;
     wireStartComponentId.clear();
@@ -605,50 +614,25 @@ void CircuitCanvas::editSelectedComponentProperties()
 
 void CircuitCanvas::keyPressEvent(QKeyEvent *event)
 {
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        isSpacePressed = true;
+        if (!isPanning) {
+            setCursor(Qt::OpenHandCursor);
+        }
+        event->accept();
+        return;
+    }
+
     if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_0) {
         resetView();
         event->accept();
         return;
     }
 
-    if (event->key() == Qt::Key_Delete && selectedComponentIndex >= 0) {
-        const QString componentId = placedComponents[selectedComponentIndex].component.id();
-        const QString name = componentDisplayName(placedComponents[selectedComponentIndex].component.name());
-        int deletedWireCount = 0;
-        for (int wireIndex = placedWires.size() - 1; wireIndex >= 0; --wireIndex) {
-            const Wire &wire = placedWires[wireIndex];
-            if (wire.startComponentId() == componentId || wire.endComponentId() == componentId) {
-                placedWires.removeAt(wireIndex);
-                ++deletedWireCount;
-            }
-        }
-        placedComponents.removeAt(selectedComponentIndex);
-        selectedComponentIndex = -1;
-        selectedWireIndex = -1;
-        QString message = deletedWireCount == 0
-                              ? QString("Deleted component: %1").arg(name)
-                              : QString("Deleted component: %1; deleted %2 connected wire(s)")
-                                    .arg(name)
-                                    .arg(deletedWireCount);
-        const QString simulationStatus = evaluateCircuit();
-        if (!simulationStatus.isEmpty()) {
-            message += " - " + simulationStatus;
-        }
-        emit actionOccurred(message);
-        update();
-        event->accept();
-        return;
-    }
-
-    if (event->key() == Qt::Key_Delete && selectedWireIndex >= 0) {
-        placedWires.removeAt(selectedWireIndex);
-        selectedWireIndex = -1;
-        QString message = "Wire deleted; circuit reevaluated";
-        const QString simulationStatus = evaluateCircuit();
-        if (!simulationStatus.isEmpty()) {
-            message += " - " + simulationStatus;
-        }
-        emit actionOccurred(message);
+    if (event->key() == Qt::Key_Delete
+        && (!selectedComponentIndices.isEmpty() || !selectedWireIndices.isEmpty()
+            || selectedComponentIndex >= 0 || selectedWireIndex >= 0)) {
+        deleteSelection();
         update();
         event->accept();
         return;
@@ -660,19 +644,26 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
         wireStartComponentId.clear();
         wireStartPinName.clear();
         isDraggingComponent = false;
-        selectedComponentIndex = -1;
-        selectedWireIndex = -1;
+        clearSelection();
         emit actionOccurred(isWiringMode ? "Wire mode enabled" : "Wire mode disabled");
         update();
         event->accept();
         return;
     }
 
-    if (event->key() == Qt::Key_Escape && hasWireStartPoint) {
-        hasWireStartPoint = false;
-        wireStartComponentId.clear();
-        wireStartPinName.clear();
-        emit actionOccurred("Wire creation cancelled");
+    if (event->key() == Qt::Key_Escape) {
+        if (hasWireStartPoint) {
+            hasWireStartPoint = false;
+            wireStartComponentId.clear();
+            wireStartPinName.clear();
+            emit actionOccurred("Wire creation cancelled");
+        } else if (!activeComponentType.isEmpty()) {
+            activeComponentType.clear();
+            emit actionOccurred("Component placement cancelled");
+        } else {
+            clearSelection();
+            emit actionOccurred("Selection cleared");
+        }
         update();
         event->accept();
         return;
@@ -731,6 +722,20 @@ void CircuitCanvas::keyPressEvent(QKeyEvent *event)
     QWidget::keyPressEvent(event);
 }
 
+void CircuitCanvas::keyReleaseEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        isSpacePressed = false;
+        if (!isPanning) {
+            unsetCursor();
+        }
+        event->accept();
+        return;
+    }
+
+    QWidget::keyReleaseEvent(event);
+}
+
 void CircuitCanvas::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton || isWiringMode) {
@@ -747,8 +752,7 @@ void CircuitCanvas::mouseDoubleClickEvent(QMouseEvent *event)
     }
 
     PlacedComponent &component = placedComponents[clickedIndex];
-    selectedComponentIndex = clickedIndex;
-    selectedWireIndex = -1;
+    selectSingleComponent(clickedIndex);
     isDraggingComponent = false;
 
     const bool directlyInteractive = component.component.name() == "VoltageSource"
@@ -786,8 +790,10 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
 {
     setFocus();
 
-    if (event->button() == Qt::MiddleButton) {
+    if (event->button() == Qt::MiddleButton
+        || (event->button() == Qt::LeftButton && isSpacePressed)) {
         isPanning = true;
+        panMouseButton = event->button();
         lastPanPoint = event->pos();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
@@ -797,8 +803,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton) {
         const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
         if (isWiringMode) {
-            selectedComponentIndex = -1;
-            selectedWireIndex = -1;
+            clearSelection();
 
             QString componentId;
             QString pinName;
@@ -867,7 +872,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
                                         wireStartPinName,
                                         componentId,
                                         pinName));
-                selectedWireIndex = placedWires.size() - 1;
+                selectSingleWire(placedWires.size() - 1);
                 hasWireStartPoint = false;
                 wireStartComponentId.clear();
                 wireStartPinName.clear();
@@ -887,8 +892,7 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
 
         const int clickedWireIndex = wireAt(worldPoint);
         if (clickedWireIndex >= 0) {
-            selectedComponentIndex = -1;
-            selectedWireIndex = clickedWireIndex;
+            selectSingleWire(clickedWireIndex);
             emit actionOccurred("Wire selected");
             update();
             event->accept();
@@ -898,9 +902,18 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
         const int clickedIndex = componentAt(worldPoint);
 
         if (clickedIndex >= 0) {
-            selectedComponentIndex = clickedIndex;
-            selectedWireIndex = -1;
+            if (!selectedComponentIndices.contains(clickedIndex)) {
+                selectSingleComponent(clickedIndex);
+            }
             isDraggingComponent = true;
+            dragStartWorldPoint = worldPoint;
+            dragStartComponentPositions.clear();
+            for (int index : selectedComponentIndices) {
+                if (index >= 0 && index < placedComponents.size()) {
+                    dragStartComponentPositions.insert(
+                        index, placedComponents[index].component.position());
+                }
+            }
             emit actionOccurred(QString("Selected component: %1")
                                     .arg(componentDisplayName(placedComponents[clickedIndex].component.name())));
             update();
@@ -908,15 +921,20 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
             return;
         }
 
-        if (!activeComponentType.isEmpty()) {
+        const bool forceAreaSelection = event->modifiers().testFlag(Qt::ControlModifier);
+        if (!activeComponentType.isEmpty() && !forceAreaSelection) {
             placeComponent(activeComponentType, worldPoint);
             event->accept();
             return;
         }
 
-        selectedComponentIndex = -1;
-        selectedWireIndex = -1;
+        clearSelection();
+        isSelectingArea = true;
+        selectionStartWorldPoint = worldPoint;
+        selectionEndWorldPoint = worldPoint;
         update();
+        event->accept();
+        return;
     }
 
     QWidget::mousePressEvent(event);
@@ -924,22 +942,42 @@ void CircuitCanvas::mousePressEvent(QMouseEvent *event)
 
 void CircuitCanvas::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MiddleButton) {
+    if (isPanning && event->button() == panMouseButton) {
         isPanning = false;
-        unsetCursor();
+        panMouseButton = Qt::NoButton;
+        if (isSpacePressed) {
+            setCursor(Qt::OpenHandCursor);
+        } else {
+            unsetCursor();
+        }
         event->accept();
         return;
     }
 
     if (event->button() == Qt::LeftButton && isDraggingComponent) {
         isDraggingComponent = false;
-        if (selectedComponentIndex >= 0) {
+        dragStartComponentPositions.clear();
+        if (selectedComponentIndices.size() > 1) {
+            emit actionOccurred(QString("Moved %1 selected components with their connected wires")
+                                    .arg(selectedComponentIndices.size()));
+        } else if (selectedComponentIndex >= 0) {
             const PlacedComponent &component = placedComponents[selectedComponentIndex];
             emit actionOccurred(QString("Moved %1 to X: %2, Y: %3")
                                     .arg(componentDisplayName(component.component.name()))
                                     .arg(component.component.position().x())
                                     .arg(component.component.position().y()));
         }
+        event->accept();
+        return;
+    }
+
+    if (event->button() == Qt::LeftButton && isSelectingArea) {
+        isSelectingArea = false;
+        updateAreaSelection();
+        emit actionOccurred(QString("Area selected: %1 component(s), %2 wire(s)")
+                                .arg(selectedComponentIndices.size())
+                                .arg(selectedWireIndices.size()));
+        update();
         event->accept();
         return;
     }
@@ -991,7 +1029,7 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
     }
 
     for (int i = 0; i < placedWires.size(); ++i) {
-        drawWire(painter, placedWires[i], i == selectedWireIndex);
+        drawWire(painter, placedWires[i], selectedWireIndices.contains(i));
     }
 
     if (isWiringMode && hasWireStartPoint) {
@@ -1018,9 +1056,21 @@ void CircuitCanvas::paintEvent(QPaintEvent *event)
         drawComponentLabel(painter, component);
         drawComponentStateText(painter, component);
 
-        if (i == selectedComponentIndex) {
+        if (selectedComponentIndices.contains(i)) {
             drawSelectedComponentBounds(painter, componentBounds(component.component.position()));
         }
+    }
+
+    if (isSelectingArea) {
+        const QRectF selectionRect = QRectF(selectionStartWorldPoint,
+                                            selectionEndWorldPoint).normalized();
+        painter.save();
+        QPen selectionPen(QColor(37, 99, 235), 1.5, Qt::DashLine);
+        selectionPen.setCosmetic(true);
+        painter.setPen(selectionPen);
+        painter.setBrush(QColor(59, 130, 246, 45));
+        painter.drawRect(selectionRect);
+        painter.restore();
     }
 
     if (!hoveredPinComponentId.isEmpty() && !hoveredPinName.isEmpty()) {
@@ -1053,12 +1103,28 @@ void CircuitCanvas::mouseMoveEvent(QMouseEvent *event)
         panOffset += movement;
         lastPanPoint = event->pos();
         update();
+        emitMousePosition(event->pos());
+        event->accept();
+        return;
     }
 
-    if (isDraggingComponent && selectedComponentIndex >= 0) {
+    if (isDraggingComponent && !dragStartComponentPositions.isEmpty()) {
         const QPoint worldPoint = screenToWorld(event->pos()).toPoint();
-        placedComponents[selectedComponentIndex].component.setPosition(
-            boundedComponentPosition(worldPoint));
+        const QPoint requestedMovement = snapToGrid(worldPoint - dragStartWorldPoint);
+        const QPoint movement = boundedGroupMovement(requestedMovement);
+        for (auto iterator = dragStartComponentPositions.cbegin();
+             iterator != dragStartComponentPositions.cend(); ++iterator) {
+            if (iterator.key() >= 0 && iterator.key() < placedComponents.size()) {
+                placedComponents[iterator.key()].component.setPosition(
+                    iterator.value() + movement);
+            }
+        }
+        update();
+    }
+
+    if (isSelectingArea) {
+        selectionEndWorldPoint = screenToWorld(event->pos()).toPoint();
+        updateAreaSelection();
         update();
     }
 
@@ -1140,6 +1206,182 @@ int CircuitCanvas::componentAt(const QPoint &worldPoint) const
     }
 
     return -1;
+}
+
+void CircuitCanvas::clearSelection()
+{
+    selectedComponentIndex = -1;
+    selectedWireIndex = -1;
+    selectedComponentIndices.clear();
+    selectedWireIndices.clear();
+}
+
+void CircuitCanvas::selectSingleComponent(int componentIndex)
+{
+    clearSelection();
+    if (componentIndex < 0 || componentIndex >= placedComponents.size()) {
+        return;
+    }
+
+    selectedComponentIndex = componentIndex;
+    selectedComponentIndices.insert(componentIndex);
+}
+
+void CircuitCanvas::selectSingleWire(int wireIndex)
+{
+    clearSelection();
+    if (wireIndex < 0 || wireIndex >= placedWires.size()) {
+        return;
+    }
+
+    selectedWireIndex = wireIndex;
+    selectedWireIndices.insert(wireIndex);
+}
+
+void CircuitCanvas::updateAreaSelection()
+{
+    const QRectF selectionRect = QRectF(selectionStartWorldPoint,
+                                        selectionEndWorldPoint).normalized();
+    selectedComponentIndices.clear();
+    selectedWireIndices.clear();
+
+    for (int index = 0; index < placedComponents.size(); ++index) {
+        if (selectionRect.intersects(
+                componentBounds(placedComponents[index].component.position()))) {
+            selectedComponentIndices.insert(index);
+        }
+    }
+
+    for (int index = 0; index < placedWires.size(); ++index) {
+        if (wireIntersectsSelection(placedWires[index], selectionRect)) {
+            selectedWireIndices.insert(index);
+        }
+    }
+
+    selectedComponentIndex = selectedComponentIndices.size() == 1
+                                 ? *selectedComponentIndices.cbegin()
+                                 : -1;
+    selectedWireIndex = selectedComponentIndices.isEmpty()
+                                && selectedWireIndices.size() == 1
+                            ? *selectedWireIndices.cbegin()
+                            : -1;
+}
+
+bool CircuitCanvas::wireIntersectsSelection(const Wire &wire,
+                                            const QRectF &selectionRect) const
+{
+    QPoint startPoint;
+    QPoint endPoint;
+    if (!wireEndpoints(wire, &startPoint, &endPoint)) {
+        return false;
+    }
+
+    const QVector<QPoint> path = orthogonalWirePath(startPoint, endPoint);
+    const QLineF top(selectionRect.topLeft(), selectionRect.topRight());
+    const QLineF right(selectionRect.topRight(), selectionRect.bottomRight());
+    const QLineF bottom(selectionRect.bottomRight(), selectionRect.bottomLeft());
+    const QLineF left(selectionRect.bottomLeft(), selectionRect.topLeft());
+
+    for (int index = 0; index + 1 < path.size(); ++index) {
+        if (selectionRect.contains(path[index])
+            || selectionRect.contains(path[index + 1])) {
+            return true;
+        }
+
+        const QLineF segment(path[index], path[index + 1]);
+        QPointF intersection;
+        if (segment.intersects(top, &intersection) == QLineF::BoundedIntersection
+            || segment.intersects(right, &intersection) == QLineF::BoundedIntersection
+            || segment.intersects(bottom, &intersection) == QLineF::BoundedIntersection
+            || segment.intersects(left, &intersection) == QLineF::BoundedIntersection) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+QPoint CircuitCanvas::boundedGroupMovement(const QPoint &requestedMovement) const
+{
+    if (dragStartComponentPositions.isEmpty()
+        || !documentCanvasSize.isValid() || documentCanvasSize.isEmpty()) {
+        return requestedMovement;
+    }
+
+    constexpr int HorizontalMargin = 80;
+    constexpr int VerticalMargin = 60;
+    const int maximumX = std::max(HorizontalMargin,
+                                  (documentCanvasSize.width() - HorizontalMargin)
+                                      / GridSpacing * GridSpacing);
+    const int maximumY = std::max(VerticalMargin,
+                                  (documentCanvasSize.height() - VerticalMargin)
+                                      / GridSpacing * GridSpacing);
+
+    int minimumMovementX = std::numeric_limits<int>::min();
+    int maximumMovementX = std::numeric_limits<int>::max();
+    int minimumMovementY = std::numeric_limits<int>::min();
+    int maximumMovementY = std::numeric_limits<int>::max();
+
+    for (auto iterator = dragStartComponentPositions.cbegin();
+         iterator != dragStartComponentPositions.cend(); ++iterator) {
+        const QPoint position = iterator.value();
+        minimumMovementX = std::max(minimumMovementX, HorizontalMargin - position.x());
+        maximumMovementX = std::min(maximumMovementX, maximumX - position.x());
+        minimumMovementY = std::max(minimumMovementY, VerticalMargin - position.y());
+        maximumMovementY = std::min(maximumMovementY, maximumY - position.y());
+    }
+
+    return QPoint(std::clamp(requestedMovement.x(), minimumMovementX, maximumMovementX),
+                  std::clamp(requestedMovement.y(), minimumMovementY, maximumMovementY));
+}
+
+void CircuitCanvas::deleteSelection()
+{
+    if (selectedComponentIndices.isEmpty() && selectedComponentIndex >= 0) {
+        selectedComponentIndices.insert(selectedComponentIndex);
+    }
+    if (selectedWireIndices.isEmpty() && selectedWireIndex >= 0) {
+        selectedWireIndices.insert(selectedWireIndex);
+    }
+
+    QSet<QString> deletedComponentIds;
+    for (int componentIndex : selectedComponentIndices) {
+        if (componentIndex >= 0 && componentIndex < placedComponents.size()) {
+            deletedComponentIds.insert(
+                placedComponents[componentIndex].component.id());
+        }
+    }
+
+    int deletedWireCount = 0;
+    for (int wireIndex = placedWires.size() - 1; wireIndex >= 0; --wireIndex) {
+        const Wire &wire = placedWires[wireIndex];
+        if (selectedWireIndices.contains(wireIndex)
+            || deletedComponentIds.contains(wire.startComponentId())
+            || deletedComponentIds.contains(wire.endComponentId())) {
+            placedWires.removeAt(wireIndex);
+            ++deletedWireCount;
+        }
+    }
+
+    QVector<int> componentIndices = selectedComponentIndices.values();
+    std::sort(componentIndices.begin(), componentIndices.end(), std::greater<int>());
+    int deletedComponentCount = 0;
+    for (int componentIndex : componentIndices) {
+        if (componentIndex >= 0 && componentIndex < placedComponents.size()) {
+            placedComponents.removeAt(componentIndex);
+            ++deletedComponentCount;
+        }
+    }
+
+    clearSelection();
+    const QString simulationStatus = evaluateCircuit();
+    QString message = QString("Deleted selection: %1 component(s), %2 wire(s)")
+                          .arg(deletedComponentCount)
+                          .arg(deletedWireCount);
+    if (!simulationStatus.isEmpty()) {
+        message += " - " + simulationStatus;
+    }
+    emit actionOccurred(message);
 }
 
 int CircuitCanvas::wireAt(const QPoint &worldPoint) const

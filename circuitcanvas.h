@@ -10,6 +10,7 @@
 #include <QPointF>
 #include <QHash>
 #include <QString>
+#include <QSet>
 #include <QVector>
 #include <QWidget>
 
@@ -71,6 +72,7 @@ protected:
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -111,6 +113,13 @@ private:
     void emitMousePosition(const QPoint &screenPoint);
     int componentAt(const QPoint &worldPoint) const;
     int wireAt(const QPoint &worldPoint) const;
+    void clearSelection();
+    void selectSingleComponent(int componentIndex);
+    void selectSingleWire(int wireIndex);
+    void updateAreaSelection();
+    bool wireIntersectsSelection(const Wire &wire, const QRectF &selectionRect) const;
+    QPoint boundedGroupMovement(const QPoint &requestedMovement) const;
+    void deleteSelection();
     QVector<QPoint> orthogonalWirePath(const QPoint &startPoint, const QPoint &endPoint) const;
     double distanceToSegment(const QPoint &point, const QPoint &startPoint, const QPoint &endPoint) const;
     QRectF componentBounds(const QPoint &position) const;
@@ -175,9 +184,15 @@ private:
     QPointF panOffset;
     bool isPanning;
     bool isDraggingComponent;
+    bool isSelectingArea;
+    bool isSpacePressed;
     bool isWiringMode;
     bool hasWireStartPoint;
     QPoint lastPanPoint;
+    Qt::MouseButton panMouseButton;
+    QPoint dragStartWorldPoint;
+    QPoint selectionStartWorldPoint;
+    QPoint selectionEndWorldPoint;
     QPoint wireStartPoint;
     QPoint previewWireEndPoint;
     QString wireStartComponentId;
@@ -198,6 +213,9 @@ private:
     quint64 nextWireId;
     int selectedComponentIndex;
     int selectedWireIndex;
+    QSet<int> selectedComponentIndices;
+    QSet<int> selectedWireIndices;
+    QHash<int, QPoint> dragStartComponentPositions;
 };
 
 #endif // CIRCUITCANVAS_H
