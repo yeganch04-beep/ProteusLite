@@ -17,6 +17,7 @@ class QColor;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
+class QEvent;
 class QKeyEvent;
 class QMouseEvent;
 class QPainter;
@@ -41,6 +42,7 @@ public:
 
     QPoint snapToGrid(const QPoint &point) const;
     void setActiveComponentType(const QString &typeName);
+    void setDocumentCanvasSize(const QSize &size);
     SimulationState simulationState() const;
     ProjectFileData projectData(const QString &projectName,
                                 const QSize &canvasSize) const;
@@ -52,10 +54,13 @@ public slots:
     void pauseSimulation();
     void stopSimulation();
     void resetSimulation();
+    void stepSimulation();
+    void editSelectedComponentProperties();
 
 signals:
     void actionOccurred(const QString &message);
     void mousePositionChanged(const QPoint &position);
+    void pinHoverChanged(const QString &pinDisplayName);
     void simulationStateChanged(CircuitCanvas::SimulationState state);
     void zoomChanged(int percentage);
 
@@ -69,6 +74,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
 
 private:
@@ -79,19 +85,24 @@ private:
 
     struct PlacedComponent
     {
-        PlacedComponent(const Component &componentModel, const QString &displayLabel)
+        PlacedComponent(const Component &componentModel,
+                        const QString &displayLabel,
+                        const QString &propertyValue)
             : component(componentModel)
             , label(displayLabel)
+            , value(propertyValue)
         {
         }
 
         Component component;
         QString label;
+        QString value;
         int rotationDegrees = 0;
         bool stateOn = false;
     };
 
     bool placeComponent(const QString &typeName, const QPoint &worldPosition);
+    QPoint boundedComponentPosition(const QPoint &worldPosition) const;
     QPointF screenToWorld(const QPoint &screenPoint) const;
     void emitMousePosition(const QPoint &screenPoint);
     int componentAt(const QPoint &worldPoint) const;
@@ -120,6 +131,7 @@ private:
     QString createComponentId();
     QString createWireId();
     QString componentDisplayName(const QString &typeName) const;
+    QString defaultComponentValue(const QString &typeName) const;
     QString createComponentLabel(const QString &typeName);
     QString labelPrefix(const QString &typeName) const;
     void buildNodes();
@@ -163,6 +175,10 @@ private:
     QPoint previewWireEndPoint;
     QString wireStartComponentId;
     QString wireStartPinName;
+    QString hoveredPinComponentId;
+    QString hoveredPinName;
+    QPoint hoveredPinPosition;
+    QSize documentCanvasSize;
     QString activeComponentType;
     QVector<PlacedComponent> placedComponents;
     QVector<Wire> placedWires;

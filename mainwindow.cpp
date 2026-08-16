@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGroupBox>
@@ -17,6 +18,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -31,6 +33,8 @@ MainWindow::MainWindow(QWidget *parent)
     , pauseButton(nullptr)
     , stopButton(nullptr)
     , resetButton(nullptr)
+    , stepButton(nullptr)
+    , propertiesButton(nullptr)
     , simulationStatusLabel(nullptr)
     , projectLogLabel(nullptr)
     , currentCanvasWidth(0)
@@ -52,12 +56,14 @@ MainWindow::MainWindow(QWidget *parent)
     pauseButton = new QPushButton("Pause", simulationGroupBox);
     stopButton = new QPushButton("Stop", simulationGroupBox);
     resetButton = new QPushButton("Reset", simulationGroupBox);
+    stepButton = new QPushButton("Step", simulationGroupBox);
     simulationStatusLabel = new QLabel(simulationGroupBox);
 
     runButton->setObjectName("simulationRunButton");
     pauseButton->setObjectName("simulationPauseButton");
     stopButton->setObjectName("simulationStopButton");
     resetButton->setObjectName("simulationResetButton");
+    stepButton->setObjectName("simulationStepButton");
     simulationStatusLabel->setObjectName("simulationStatusLabel");
     simulationStatusLabel->setAlignment(Qt::AlignCenter);
     simulationStatusLabel->setMinimumWidth(130);
@@ -66,6 +72,7 @@ MainWindow::MainWindow(QWidget *parent)
     simulationLayout->addWidget(pauseButton);
     simulationLayout->addWidget(stopButton);
     simulationLayout->addWidget(resetButton);
+    simulationLayout->addWidget(stepButton);
     simulationLayout->addStretch();
     simulationLayout->addWidget(simulationStatusLabel);
 
@@ -77,6 +84,10 @@ MainWindow::MainWindow(QWidget *parent)
     auto *componentsLayout = new QVBoxLayout(componentsGroupBox);
     auto *componentList = new ComponentListWidget(componentsGroupBox);
     componentsLayout->addWidget(componentList);
+    propertiesButton = new QPushButton("Properties...", componentsGroupBox);
+    propertiesButton->setObjectName("componentPropertiesButton");
+    propertiesButton->setToolTip("Edit the selected component label and interactive state (P)");
+    componentsLayout->addWidget(propertiesButton);
 
     auto *canvasGroupBox = new QGroupBox("Circuit Canvas", editorPage);
     auto *canvasLayout = new QVBoxLayout(canvasGroupBox);
@@ -122,6 +133,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(componentList, &ComponentListWidget::componentTypeSelected,
             circuitCanvas, &CircuitCanvas::setActiveComponentType);
+    connect(propertiesButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::editSelectedComponentProperties);
 
     connect(circuitCanvas, &CircuitCanvas::actionOccurred, this,
             [this](const QString &message) {
@@ -138,6 +151,8 @@ MainWindow::MainWindow(QWidget *parent)
             circuitCanvas, &CircuitCanvas::stopSimulation);
     connect(resetButton, &QPushButton::clicked,
             circuitCanvas, &CircuitCanvas::resetSimulation);
+    connect(stepButton, &QPushButton::clicked,
+            circuitCanvas, &CircuitCanvas::stepSimulation);
     connect(circuitCanvas, &CircuitCanvas::simulationStateChanged, this,
             [this](CircuitCanvas::SimulationState) {
                 updateSimulationControls();
@@ -167,11 +182,9 @@ void MainWindow::createStartPage()
             this, &MainWindow::openProject);
     connect(startPage, &StartPage::exitRequested,
             qApp, &QApplication::quit);
-    connect(startPage, &StartPage::recentProjectSelected, this,
-            [this](const QString &projectName) {
-                QMessageBox::information(this, "Recent Project",
-                                         projectName + " is a placeholder recent project.");
-            });
+    connect(startPage, &StartPage::recentProjectSelected,
+            this, &MainWindow::openProjectFile);
+    refreshRecentProjects();
 }
 
 void MainWindow::createMenuActions()
@@ -215,24 +228,41 @@ void MainWindow::openProject()
         return;
     }
 
+    openProjectFile(fileName);
+}
+
+bool MainWindow::openProjectFile(const QString &fileName)
+{
+    if (!QFileInfo::exists(fileName)) {
+        QSettings settings("ProteusLite", "ProteusLite");
+        QStringList paths = recentProjectPaths();
+        paths.removeAll(QDir::cleanPath(QFileInfo(fileName).absoluteFilePath()));
+        settings.setValue("recentProjects", paths);
+        refreshRecentProjects();
+        QMessageBox::warning(this, "Open Project", "The selected recent project no longer exists.");
+        return false;
+    }
+
     ProjectFileData project;
     QString errorMessage;
     if (!ProjectFile::load(fileName, &project, &errorMessage)) {
         QMessageBox::critical(this, "Open Project", errorMessage);
-        return;
+        return false;
     }
     if (!circuitCanvas->loadProjectData(project, &errorMessage)) {
         QMessageBox::critical(this, "Open Project", errorMessage);
-        return;
+        return false;
     }
 
     showEditorPage(project.projectName,
                    project.canvasSize.width(),
                    project.canvasSize.height());
     currentProjectFilePath = fileName;
+    addRecentProject(fileName);
     if (projectLogLabel != nullptr) {
         projectLogLabel->setText(QString("Project opened: %1").arg(fileName));
     }
+    return true;
 }
 
 void MainWindow::saveProject()
@@ -285,6 +315,7 @@ bool MainWindow::writeProjectFile(const QString &fileName)
         return false;
     }
     currentProjectFilePath = fileName;
+    addRecentProject(fileName);
     if (projectLogLabel != nullptr) {
         projectLogLabel->setText(QString("Project saved: %1").arg(fileName));
     }
@@ -296,6 +327,7 @@ void MainWindow::showEditorPage(const QString &projectName, int canvasWidth, int
     currentProjectName = projectName;
     currentCanvasWidth = canvasWidth;
     currentCanvasHeight = canvasHeight;
+    circuitCanvas->setDocumentCanvasSize(QSize(currentCanvasWidth, currentCanvasHeight));
 
     setWindowTitle(QString("ProteusLite - %1").arg(projectName));
 
@@ -315,7 +347,47 @@ void MainWindow::showStartPage()
         circuitCanvas->stopSimulation();
     }
     setWindowTitle("ProteusLite");
+    refreshRecentProjects();
     pageStack->setCurrentWidget(startPage);
+}
+
+QStringList MainWindow::recentProjectPaths() const
+{
+    QSettings settings("ProteusLite", "ProteusLite");
+    const QStringList storedPaths = settings.value("recentProjects").toStringList();
+    QStringList validPaths;
+    for (const QString &path : storedPaths) {
+        const QString absolutePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        if (QFileInfo::exists(absolutePath) && !validPaths.contains(absolutePath)) {
+            validPaths.append(absolutePath);
+        }
+        if (validPaths.size() == 5) {
+            break;
+        }
+    }
+    return validPaths;
+}
+
+void MainWindow::addRecentProject(const QString &fileName)
+{
+    const QString absolutePath = QDir::cleanPath(QFileInfo(fileName).absoluteFilePath());
+    QStringList paths = recentProjectPaths();
+    paths.removeAll(absolutePath);
+    paths.prepend(absolutePath);
+    while (paths.size() > 5) {
+        paths.removeLast();
+    }
+
+    QSettings settings("ProteusLite", "ProteusLite");
+    settings.setValue("recentProjects", paths);
+    refreshRecentProjects();
+}
+
+void MainWindow::refreshRecentProjects()
+{
+    if (startPage != nullptr) {
+        startPage->setRecentProjects(recentProjectPaths());
+    }
 }
 
 void MainWindow::updateSimulationControls()
@@ -335,6 +407,10 @@ void MainWindow::updateSimulationControls()
     pauseButton->setEnabled(isRunning);
     stopButton->setEnabled(!isStopped);
     resetButton->setEnabled(true);
+    stepButton->setEnabled(!isRunning);
+    stepButton->setToolTip(isPaused
+                               ? "Evaluate exactly one simulation step while paused"
+                               : "Evaluate exactly one simulation step without starting the timer");
 
     if (isRunning) {
         simulationStatusLabel->setText("Running");

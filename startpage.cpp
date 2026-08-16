@@ -1,8 +1,12 @@
 #include "startpage.h"
 
+#include <QBrush>
+#include <QColor>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -43,8 +47,7 @@ StartPage::StartPage(QWidget *parent)
     recentFont.setBold(true);
     recentLabel->setFont(recentFont);
 
-    recentProjectsList->addItem("Example Circuit");
-    recentProjectsList->addItem("Demo Project");
+    recentProjectsList->setObjectName("recentProjectsList");
     recentProjectsList->setMaximumHeight(120);
 
     mainLayout->addStretch();
@@ -62,6 +65,29 @@ StartPage::StartPage(QWidget *parent)
 
     connect(recentProjectsList, &QListWidget::itemClicked, this,
             [this](QListWidgetItem *item) {
-                emit recentProjectSelected(item->text());
+                const QString filePath = item->data(Qt::UserRole).toString();
+                if (!filePath.isEmpty()) {
+                    emit recentProjectSelected(filePath);
+                }
             });
+
+    setRecentProjects({});
+}
+
+void StartPage::setRecentProjects(const QStringList &filePaths)
+{
+    recentProjectsList->clear();
+
+    for (const QString &filePath : filePaths) {
+        const QFileInfo fileInfo(filePath);
+        auto *item = new QListWidgetItem(fileInfo.completeBaseName(), recentProjectsList);
+        item->setData(Qt::UserRole, fileInfo.absoluteFilePath());
+        item->setToolTip(fileInfo.absoluteFilePath());
+    }
+
+    if (recentProjectsList->count() == 0) {
+        auto *emptyItem = new QListWidgetItem("No recent projects yet", recentProjectsList);
+        emptyItem->setFlags(emptyItem->flags() & ~Qt::ItemIsEnabled & ~Qt::ItemIsSelectable);
+        emptyItem->setForeground(QBrush(QColor(120, 120, 120)));
+    }
 }
