@@ -33,6 +33,7 @@ struct ProjectFileData
     int formatVersion = 1;
     QString projectName;
     QSize canvasSize;
+    bool infiniteCanvas = false;
     QVector<ProjectComponentData> components;
     QVector<ProjectWireData> wires;
 };

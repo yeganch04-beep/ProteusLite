@@ -17,6 +17,7 @@ public:
     QString projectName() const;
     int canvasWidth() const;
     int canvasHeight() const;
+    bool isInfiniteCanvas() const;
 
 private:
     void updateCanvasSizeFields();

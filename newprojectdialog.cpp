@@ -18,7 +18,7 @@ NewProjectDialog::NewProjectDialog(QWidget *parent)
 
     projectNameEdit->setText("Untitled Project");
 
-    sizePresetComboBox->addItems({"A4", "A3", "Custom"});
+    sizePresetComboBox->addItems({"A4", "A3", "Infinite Canvas", "Custom"});
 
     widthSpinBox->setRange(200, 5000);
     heightSpinBox->setRange(200, 5000);
@@ -57,6 +57,11 @@ int NewProjectDialog::canvasWidth() const
 int NewProjectDialog::canvasHeight() const
 {
     return heightSpinBox->value();
+}
+
+bool NewProjectDialog::isInfiniteCanvas() const
+{
+    return sizePresetComboBox->currentText() == "Infinite Canvas";
 }
 
 void NewProjectDialog::updateCanvasSizeFields()
