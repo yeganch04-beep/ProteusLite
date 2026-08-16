@@ -2466,14 +2466,19 @@ void CircuitCanvas::drawVoltageSource(QPainter &painter, int value) const
     painter.drawText(QRectF(-10, 24, 20, 16), Qt::AlignCenter, QString::number(value));
 }
 
+
 void CircuitCanvas::drawBattery(QPainter &painter) const
 {
+  
     painter.drawLine(-58, 0, -22, 0);
-    painter.drawLine(-22, -24, -22, 24);
-    painter.drawLine(2, -14, 2, 14);
+    painter.drawLine(-22, -14, -22, 14);
+
+   
+    painter.drawLine(2, -24, 2, 24);
     painter.drawLine(2, 0, 58, 0);
-    painter.drawText(QRectF(-45, -34, 18, 18), Qt::AlignCenter, "+");
-    painter.drawText(QRectF(9, -29, 18, 18), Qt::AlignCenter, "-");
+
+    painter.drawText(QRectF(-45, -29, 18, 18), Qt::AlignCenter, "-");
+    painter.drawText(QRectF(9, -34, 18, 18), Qt::AlignCenter, "+");
 }
 
 void CircuitCanvas::drawAndGate(QPainter &painter) const
